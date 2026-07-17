@@ -1,2 +1,4 @@
-# Minimal runtime for the starter OceanicOS service
+# Runtime and test dependencies for the OceanicOS starter service
+flask>=3.0
+gunicorn>=21.2
 pytest

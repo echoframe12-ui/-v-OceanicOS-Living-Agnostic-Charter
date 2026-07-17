@@ -1,4 +1,4 @@
-# OceanicOS Living Agnostic Charter Roadmap
+# Ω∞v OceanicOS Living Agnostic Charter Roadmap
 
 This roadmap captures the first practical steps for turning the charter into an active project.
 

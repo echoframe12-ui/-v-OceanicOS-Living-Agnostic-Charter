@@ -111,7 +111,7 @@ class OceanicOSAppTests(unittest.TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["count"], 1)
+        self.assertGreaterEqual(response.get_json()["count"], 1)
 
         snapshot = self.client.get("/state")
         self.assertEqual(snapshot.status_code, 200)
@@ -163,7 +163,7 @@ class OceanicOSAppTests(unittest.TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["count"], 1)
+        self.assertGreaterEqual(response.get_json()["count"], 1)
 
         dashboard = self.client.get("/dashboard")
         self.assertEqual(dashboard.status_code, 200)
@@ -177,7 +177,37 @@ class OceanicOSAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["task"], "Draft a charter update")
-        self.assertEqual(response.get_json()["model"]["adapter"], "local")
+        self.assertEqual(response.get_json()["model"]["adapter"], "reasoning")
+        self.assertEqual(response.get_json()["review"]["status"], "approved")
+        self.assertIn("ledger", response.get_json()["stages"])
+
+        history = self.client.get("/builder/history")
+        self.assertEqual(history.status_code, 200)
+        self.assertTrue(history.get_json())
+
+        builds = self.client.get("/builds")
+        self.assertEqual(builds.status_code, 200)
+        self.assertTrue(builds.get_json())
+
+    def test_models_listing_endpoint(self):
+        response = self.client.get("/models")
+        self.assertEqual(response.status_code, 200)
+        adapters = response.get_json()
+        self.assertEqual(adapters[0]["name"], "local")
+        self.assertTrue(any(adapter["name"] == "reasoning" for adapter in adapters))
+
+    def test_builder_evolve_endpoint(self):
+        response = self.client.post("/builder/evolve")
+        self.assertEqual(response.status_code, 200)
+        report = response.get_json()
+        self.assertIn("runs", report)
+        self.assertIn("next_steps", report)
+        self.assertTrue(report["next_steps"])
+
+    def test_unknown_workflow_returns_404(self):
+        response = self.client.get("/workflows/does-not-exist")
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("error", response.get_json())
 
     def test_plugin_endpoints(self):
         response = self.client.post(

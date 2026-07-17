@@ -1,4 +1,4 @@
-# Contributing to OceanicOS Living Agnostic Charter
+# Contributing to Ω∞v OceanicOS Living Agnostic Charter
 
 Thank you for helping shape OceanicOS. This project is intentionally lightweight and open to new ideas.
 
