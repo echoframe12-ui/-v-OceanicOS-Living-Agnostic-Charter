@@ -173,6 +173,17 @@ docker run -p 5000:5000 oceanicos
 
 The SQLite database location can be configured with the `OCEANICOS_DB` environment variable (defaults to `oceanicos.db` in the working directory).
 
+## Real Model Provider
+
+When the `ANTHROPIC_API_KEY` environment variable is set, the app registers a `claude` adapter ([claude_adapter.py](claude_adapter.py)) that routes prompts mentioning "claude" to a real Claude model (`claude-opus-4-8`) through the official Anthropic SDK:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... python app.py
+curl -X POST http://127.0.0.1:5000/models/route -H 'Content-Type: application/json' -d '{"prompt": "Ask claude to summarize the charter principles"}'
+```
+
+Without the key, the app runs fully offline on the demo adapters.
+
 ## Scope
 
 This charter is intended to guide:

@@ -4,6 +4,7 @@ from flask import Flask, jsonify, render_template, request
 
 from agent import AgentLoop
 from artifacts import ArtifactRegistry
+from claude_adapter import create_claude_adapter
 from dashboard import Dashboard
 from decisions import DecisionRegistry
 from models import ModelAdapter, ModelRouter
@@ -24,6 +25,9 @@ model_router.register(ModelAdapter("local", "demo"))
 model_router.register(
     ModelAdapter("reasoning", "demo", keywords=["plan", "build", "design", "charter"])
 )
+claude_adapter = create_claude_adapter(keywords=["claude"])
+if claude_adapter is not None:
+    model_router.register(claude_adapter)
 agent_loop = AgentLoop()
 state_snapshot = StateSnapshot()
 review_engine = ReviewEngine()

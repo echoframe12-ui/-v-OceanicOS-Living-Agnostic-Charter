@@ -159,7 +159,11 @@ class UniversalBuilder:
             next_steps.append(f"Resolve {len(pending_reviews)} pending review(s)")
         if draft_artifacts:
             next_steps.append(f"Promote {len(draft_artifacts)} draft artifact(s)")
-        next_steps.append("Connect a real model provider through a new ModelAdapter")
+        providers = {adapter["provider"] for adapter in self.model_router.list_adapters()}
+        if "anthropic" not in providers:
+            next_steps.append(
+                "Connect a real model provider (set ANTHROPIC_API_KEY to enable the Claude adapter)"
+            )
         next_steps.append("Register external tool plugins (GitHub, calendar, files)")
         next_steps.append("Grow the layer directories with working engine implementations")
 

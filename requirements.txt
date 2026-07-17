@@ -1,4 +1,5 @@
 # Runtime and test dependencies for the OceanicOS starter service
 flask>=3.0
 gunicorn>=21.2
+anthropic>=0.40
 pytest
