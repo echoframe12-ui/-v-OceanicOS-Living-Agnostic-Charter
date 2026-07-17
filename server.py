@@ -52,7 +52,11 @@ class OceanicOSService:
             )
 
     def health(self) -> dict[str, Any]:
-        return {"status": "ok", "service": "OceanicOS"}
+        return {
+            "status": "ok",
+            "service": "OceanicOS",
+            "charter": "Ω∞v OceanicOS Living Agnostic Charter",
+        }
 
     def create_plan(self, task: str) -> dict[str, Any]:
         return {

@@ -1,4 +1,4 @@
-# OceanicOS Living Agnostic Charter
+# Ω∞v OceanicOS Living Agnostic Charter
 
 This repository is the starting point for a living, agnostic charter for OceanicOS: a flexible framework for building open, resilient, and human-centered systems without locking the project into rigid assumptions.
 
