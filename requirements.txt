@@ -1,0 +1,2 @@
+# Minimal runtime for the starter OceanicOS service
+pytest

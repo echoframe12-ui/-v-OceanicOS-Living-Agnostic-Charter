@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OceanicOS Builder</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f6f8fb;
+        color: #14213d;
+        line-height: 1.5;
+      }
+      .card {
+        background: white;
+        border: 1px solid #dbe4f0;
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 10px rgba(20, 33, 61, 0.05);
+      }
+      form {
+        display: grid;
+        gap: 0.75rem;
+      }
+      input,
+      textarea,
+      button {
+        font: inherit;
+        padding: 0.7rem;
+        border-radius: 8px;
+        border: 1px solid #cbd5e1;
+      }
+      button {
+        background: #0f766e;
+        color: white;
+        border: none;
+        cursor: pointer;
+      }
+      pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 1rem;
+        border-radius: 8px;
+        overflow-x: auto;
+      }
+      code {
+        background: #e2e8f0;
+        padding: 0.2rem 0.4rem;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OceanicOS Universal Builder</h1>
+    <p>Launch a planning run, route it to a model adapter, and inspect the generated state and artifacts.</p>
+
+    <div class="card">
+      <h2>Builder</h2>
+      <form id="builder-form">
+        <label for="task">Task</label>
+        <input id="task" name="task" value="Draft a charter update" required />
+        <label for="context">Context</label>
+        <textarea id="context" name="context" rows="3">Governance update for the living charter.</textarea>
+        <button type="submit">Run workflow</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Health</h2>
+      <div id="health">Loading…</div>
+    </div>
+
+    <div class="card">
+      <h2>Output</h2>
+      <pre id="result">{} </pre>
+    </div>
+
+    <script>
+      async function loadHealth() {
+        const response = await fetch('/health');
+        const data = await response.json();
+        document.getElementById('health').textContent = JSON.stringify(data, null, 2);
+      }
+
+      document.getElementById('builder-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const payload = {
+          task: form.task.value,
+          context: form.context.value,
+        };
+
+        const response = await fetch('/builder/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      });
+
+      loadHealth();
+    </script>
+  </body>
+</html>
