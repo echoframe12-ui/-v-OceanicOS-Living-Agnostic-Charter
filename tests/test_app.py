@@ -177,13 +177,24 @@ class OceanicOSAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["task"], "Draft a charter update")
-        self.assertEqual(response.get_json()["model"]["adapter"], "local")
+        self.assertEqual(response.get_json()["model"]["adapter"], "reasoning")
         self.assertEqual(response.get_json()["review"]["status"], "approved")
-        self.assertIn("stages", response.get_json())
+        self.assertIn("ledger", response.get_json()["stages"])
 
         history = self.client.get("/builder/history")
         self.assertEqual(history.status_code, 200)
         self.assertTrue(history.get_json())
+
+        builds = self.client.get("/builds")
+        self.assertEqual(builds.status_code, 200)
+        self.assertTrue(builds.get_json())
+
+    def test_models_listing_endpoint(self):
+        response = self.client.get("/models")
+        self.assertEqual(response.status_code, 200)
+        adapters = response.get_json()
+        self.assertEqual(adapters[0]["name"], "local")
+        self.assertTrue(any(adapter["name"] == "reasoning" for adapter in adapters))
 
     def test_builder_evolve_endpoint(self):
         response = self.client.post("/builder/evolve")

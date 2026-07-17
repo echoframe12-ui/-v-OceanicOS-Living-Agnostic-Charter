@@ -41,6 +41,39 @@ class OceanicOSServiceTests(unittest.TestCase):
         plugins = self.service.list_plugins()
         self.assertTrue(any(plugin["name"] == "github" for plugin in plugins))
 
+    def test_timestamp_and_word_count_tools(self):
+        tools = {tool["name"] for tool in self.service.list_tools()}
+        self.assertIn("timestamp", tools)
+        self.assertIn("word_count", tools)
+
+        stamp = self.service.invoke_tool("timestamp", {})
+        self.assertIn("T", stamp["output"])
+
+        count = self.service.invoke_tool("word_count", {"text": "reality before assumption"})
+        self.assertEqual(count["output"], 3)
+
+    def test_builds_can_be_recorded_and_listed(self):
+        entry = self.service.record_build(
+            "Build the charter platform",
+            "testing",
+            "build-the-charter-platform",
+            ["plan", "workflow"],
+        )
+        self.assertEqual(entry["id"], 1)
+        self.assertIn("created_at", entry)
+
+        builds = self.service.list_builds()
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(builds[0]["task"], "Build the charter platform")
+        self.assertEqual(builds[0]["stages"], ["plan", "workflow"])
+
+    def test_builds_persist_across_service_instances(self):
+        self.service.record_build("First build", "testing", "first-build", ["plan"])
+        reopened = OceanicOSService(self.temp_db.name)
+        builds = reopened.list_builds()
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(builds[0]["artifact"], "first-build")
+
 
 if __name__ == "__main__":
     unittest.main()

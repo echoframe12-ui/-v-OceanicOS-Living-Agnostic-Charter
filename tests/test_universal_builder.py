@@ -17,7 +17,17 @@ class UniversalBuilderTests(unittest.TestCase):
         self.assertEqual(result["run_id"], 1)
         self.assertEqual(
             result["stages"],
-            ["plan", "workflow", "route", "agent", "review", "decision", "artifact", "memory"],
+            [
+                "plan",
+                "workflow",
+                "route",
+                "agent",
+                "review",
+                "decision",
+                "artifact",
+                "memory",
+                "ledger",
+            ],
         )
         self.assertEqual(result["review"]["status"], "approved")
         self.assertEqual(result["artifact"]["status"], "complete")
@@ -42,6 +52,7 @@ class UniversalBuilderTests(unittest.TestCase):
         self.assertEqual(report["runs"], 1)
         self.assertEqual(report["artifacts"], 1)
         self.assertEqual(report["reviews"]["pending"], 0)
+        self.assertGreaterEqual(report["persisted_builds"], 1)
         self.assertTrue(report["next_steps"])
 
 

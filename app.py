@@ -21,6 +21,9 @@ workflow_engine = WorkflowEngine()
 planner = Planner()
 model_router = ModelRouter()
 model_router.register(ModelAdapter("local", "demo"))
+model_router.register(
+    ModelAdapter("reasoning", "demo", keywords=["plan", "build", "design", "charter"])
+)
 agent_loop = AgentLoop()
 state_snapshot = StateSnapshot()
 review_engine = ReviewEngine()
@@ -122,6 +125,16 @@ def execute_planner():
 @app.route("/plans/trace", methods=["GET"])
 def planner_trace():
     return jsonify(planner.get_trace())
+
+
+@app.route("/models", methods=["GET"])
+def list_models():
+    return jsonify(model_router.list_adapters())
+
+
+@app.route("/builds", methods=["GET"])
+def list_builds():
+    return jsonify(service.list_builds())
 
 
 @app.route("/models/route", methods=["POST"])

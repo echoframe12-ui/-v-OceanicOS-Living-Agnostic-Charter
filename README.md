@@ -107,7 +107,9 @@ Use the endpoints:
 - POST /workflows/<name>/execute
 - POST /plans/execute
 - GET /plans/trace
+- GET /models
 - POST /models/route
+- GET /builds
 - POST /agent/run
 - GET /agent/events
 - POST /state

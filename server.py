@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ class OceanicOSService:
         self._memory: list[dict[str, Any]] = []
         self._tools = {
             "echo": self._echo_tool,
+            "timestamp": self._timestamp_tool,
+            "word_count": self._word_count_tool,
         }
         self._plugins: list[dict[str, Any]] = []
         self._init_db()
@@ -32,6 +35,18 @@ class OceanicOSService:
                 CREATE TABLE IF NOT EXISTS plugins (
                     name TEXT PRIMARY KEY,
                     config TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS builds (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task TEXT NOT NULL,
+                    context TEXT NOT NULL,
+                    artifact TEXT NOT NULL,
+                    stages TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -88,5 +103,50 @@ class OceanicOSService:
         self._plugins = [{"name": row[0], "config": json.loads(row[1])} for row in rows]
         return self._plugins
 
+    def record_build(
+        self,
+        task: str,
+        context: str,
+        artifact: str,
+        stages: list[str],
+    ) -> dict[str, Any]:
+        created_at = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self._db_path) as conn:
+            cursor = conn.execute(
+                "INSERT INTO builds (task, context, artifact, stages, created_at) VALUES (?, ?, ?, ?, ?)",
+                (task, context, artifact, json.dumps(stages), created_at),
+            )
+        return {
+            "id": cursor.lastrowid,
+            "task": task,
+            "context": context,
+            "artifact": artifact,
+            "stages": stages,
+            "created_at": created_at,
+        }
+
+    def list_builds(self) -> list[dict[str, Any]]:
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute(
+                "SELECT id, task, context, artifact, stages, created_at FROM builds ORDER BY id"
+            ).fetchall()
+        return [
+            {
+                "id": row[0],
+                "task": row[1],
+                "context": row[2],
+                "artifact": row[3],
+                "stages": json.loads(row[4]),
+                "created_at": row[5],
+            }
+            for row in rows
+        ]
+
     def _echo_tool(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {"output": payload.get("message", "")}
+
+    def _timestamp_tool(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {"output": datetime.now(timezone.utc).isoformat()}
+
+    def _word_count_tool(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {"output": len(str(payload.get("text", "")).split())}

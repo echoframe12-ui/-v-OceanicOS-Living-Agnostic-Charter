@@ -111,6 +111,9 @@ class UniversalBuilder:
         self.state_snapshot.record("builder_run_complete", task)
         stages.append("memory")
 
+        self.service.record_build(task, context or "general", artifact["name"], stages)
+        stages.append("ledger")
+
         result = {
             "run_id": run_id,
             "task": task,
@@ -162,6 +165,7 @@ class UniversalBuilder:
 
         return {
             "runs": len(self._runs),
+            "persisted_builds": len(self.service.list_builds()),
             "artifacts": len(artifacts),
             "decisions": len(self.decision_registry.list()),
             "reviews": {
