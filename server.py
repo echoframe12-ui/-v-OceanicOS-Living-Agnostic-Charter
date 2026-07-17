@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 
 class OceanicOSService:
     def __init__(self, db_path: str | None = None) -> None:
-        self._db_path = Path(db_path or "oceanicos.db")
+        self._db_path = Path(db_path or os.getenv("OCEANICOS_DB", "oceanicos.db"))
         self._memory: list[dict[str, Any]] = []
         self._tools = {
             "echo": self._echo_tool,

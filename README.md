@@ -124,6 +124,8 @@ Use the endpoints:
 - POST /plugins
 - GET /plugins
 - POST /builder/run
+- GET /builder/history
+- POST /builder/evolve
 
 Run the universal builder with:
 
@@ -144,21 +146,30 @@ HOST=127.0.0.1 PORT=9000 FLASK_DEBUG=0 python app.py
 ```
 
 > Reality is the source. Evidence guides understanding. Humans lead. OceanicOS connects. Better reality is the outcome.
-```
 
-Run the web app with:
+## Deployment
+
+The app ships as a full-stack deployable service:
+
+- [wsgi.py](wsgi.py) exposes the Flask app for any WSGI server
+- [Procfile](Procfile) runs the app under gunicorn for Heroku-style platforms
+- [Dockerfile](Dockerfile) builds a self-contained container image
+
+Run in production mode locally:
 
 ```bash
-python app.py
+pip install -r requirements.txt
+gunicorn --bind 0.0.0.0:5000 wsgi:app
 ```
 
-Then open the starter frontend at http://127.0.0.1:5000/.
-
-Run the tests with:
+Or with Docker:
 
 ```bash
-python -m pytest -q
+docker build -t oceanicos .
+docker run -p 5000:5000 oceanicos
 ```
+
+The SQLite database location can be configured with the `OCEANICOS_DB` environment variable (defaults to `oceanicos.db` in the working directory).
 
 ## Scope
 
@@ -211,4 +222,3 @@ OceanicOS is meant to be a living, agnostic approach to building systems that ar
 
 - See [ROADMAP.md](ROADMAP.md) for the initial milestones and goals.
 - See [CONSTITUTION.md](CONSTITUTION.md) for the rules that guide the project.
->>>>>>> 493d8e4 (Add interactive builder, startup config, and deployment entry)

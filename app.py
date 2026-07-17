@@ -12,6 +12,7 @@ from plugins import PluginRegistry
 from review import ReviewEngine
 from server import OceanicOSService
 from state import StateSnapshot
+from universal_builder import UniversalBuilder
 from workflows import WorkflowEngine
 
 app = Flask(__name__)
@@ -27,6 +28,29 @@ decision_registry = DecisionRegistry()
 artifact_registry = ArtifactRegistry()
 dashboard = Dashboard()
 plugin_registry = PluginRegistry()
+builder = UniversalBuilder(
+    service=service,
+    planner=planner,
+    workflow_engine=workflow_engine,
+    model_router=model_router,
+    agent_loop=agent_loop,
+    state_snapshot=state_snapshot,
+    review_engine=review_engine,
+    decision_registry=decision_registry,
+    artifact_registry=artifact_registry,
+    dashboard=dashboard,
+    plugin_registry=plugin_registry,
+)
+
+
+@app.errorhandler(KeyError)
+def handle_not_found(error):
+    return jsonify({"error": str(error).strip("'\"")}), 404
+
+
+@app.errorhandler(ValueError)
+def handle_bad_request(error):
+    return jsonify({"error": str(error)}), 400
 
 
 @app.route("/", methods=["GET"])
@@ -201,32 +225,19 @@ def run_builder():
     task = payload.get("task", "Draft a charter update")
     context = payload.get("context", "Open orchestration")
 
-    plan_result = planner.plan(task, context)
-    model_result = model_router.route(task)
-    review_result = review_engine.submit(f"Review plan for {task}", "builder")
-    decision_result = decision_registry.record(
-        f"Run {task}",
-        context,
-        f"Accepted a builder run for {task}",
-    )
-    artifact_result = artifact_registry.create(
-        task.lower().replace(" ", "-"),
-        "plan",
-        "draft",
-    )
+    result = builder.run(task, context)
+    result["dashboard"] = dashboard.summary()
+    return jsonify(result)
 
-    return jsonify(
-        {
-            "task": task,
-            "plan": plan_result,
-            "model": model_result,
-            "state": state_snapshot.snapshot(),
-            "review": review_result,
-            "decision": decision_result,
-            "artifact": artifact_result,
-            "dashboard": dashboard.summary(),
-        }
-    )
+
+@app.route("/builder/history", methods=["GET"])
+def builder_history():
+    return jsonify(builder.history())
+
+
+@app.route("/builder/evolve", methods=["POST", "GET"])
+def builder_evolve():
+    return jsonify(builder.evolve())
 
 
 @app.route("/plugins", methods=["POST"])

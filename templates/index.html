@@ -13,6 +13,12 @@
         color: #14213d;
         line-height: 1.5;
       }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 1rem;
+        align-items: start;
+      }
       .card {
         background: white;
         border: 1px solid #dbe4f0;
@@ -39,70 +45,154 @@
         border: none;
         cursor: pointer;
       }
+      button.secondary {
+        background: #1e40af;
+      }
       pre {
         background: #0f172a;
         color: #e2e8f0;
         padding: 1rem;
         border-radius: 8px;
         overflow-x: auto;
+        max-height: 24rem;
       }
-      code {
-        background: #e2e8f0;
-        padding: 0.2rem 0.4rem;
-        border-radius: 4px;
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.4rem 0.6rem;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 0.95rem;
+      }
+      .status-pill {
+        display: inline-block;
+        padding: 0.1rem 0.6rem;
+        border-radius: 999px;
+        background: #d1fae5;
+        color: #065f46;
+        font-size: 0.85rem;
       }
     </style>
   </head>
   <body>
     <h1>OceanicOS Universal Builder</h1>
-    <p>Launch a planning run, route it to a model adapter, and inspect the generated state and artifacts.</p>
+    <p>
+      Launch a full build run — planning, workflow execution, model routing, review,
+      decision, artifact, and persistent memory — then inspect the dashboard, run
+      history, and evolution report.
+    </p>
 
-    <div class="card">
-      <h2>Builder</h2>
-      <form id="builder-form">
-        <label for="task">Task</label>
-        <input id="task" name="task" value="Draft a charter update" required />
-        <label for="context">Context</label>
-        <textarea id="context" name="context" rows="3">Governance update for the living charter.</textarea>
-        <button type="submit">Run workflow</button>
-      </form>
-    </div>
+    <div class="grid">
+      <div>
+        <div class="card">
+          <h2>Builder</h2>
+          <form id="builder-form">
+            <label for="task">Task</label>
+            <input id="task" name="task" value="Draft a charter update" required />
+            <label for="context">Context</label>
+            <textarea id="context" name="context" rows="3">Governance update for the living charter.</textarea>
+            <button type="submit">Run build pipeline</button>
+            <button type="button" class="secondary" id="evolve-button">Evolution report</button>
+          </form>
+        </div>
 
-    <div class="card">
-      <h2>Health</h2>
-      <div id="health">Loading…</div>
-    </div>
+        <div class="card">
+          <h2>Health</h2>
+          <div id="health">Loading…</div>
+        </div>
 
-    <div class="card">
-      <h2>Output</h2>
-      <pre id="result">{} </pre>
+        <div class="card">
+          <h2>Dashboard</h2>
+          <div id="dashboard">No builds yet.</div>
+        </div>
+
+        <div class="card">
+          <h2>Run history</h2>
+          <div id="history">No runs yet.</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h2>Output</h2>
+          <pre id="result">{}</pre>
+        </div>
+
+        <div class="card">
+          <h2>Evolution</h2>
+          <pre id="evolution">Run the evolution report to see suggested next steps.</pre>
+        </div>
+      </div>
     </div>
 
     <script>
+      async function fetchJson(url, options) {
+        const response = await fetch(url, options);
+        return response.json();
+      }
+
       async function loadHealth() {
-        const response = await fetch('/health');
-        const data = await response.json();
-        document.getElementById('health').textContent = JSON.stringify(data, null, 2);
+        const data = await fetchJson('/health');
+        document.getElementById('health').textContent = JSON.stringify(data);
+      }
+
+      async function loadDashboard() {
+        const data = await fetchJson('/dashboard');
+        const target = document.getElementById('dashboard');
+        if (!data.items || data.items.length === 0) {
+          target.textContent = 'No builds yet.';
+          return;
+        }
+        const rows = data.items
+          .map(
+            (item) =>
+              `<tr><td>${item.title}</td><td>${item.kind}</td><td><span class="status-pill">${item.status}</span></td></tr>`
+          )
+          .join('');
+        target.innerHTML = `<table><thead><tr><th>Title</th><th>Kind</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      async function loadHistory() {
+        const data = await fetchJson('/builder/history');
+        const target = document.getElementById('history');
+        if (!data || data.length === 0) {
+          target.textContent = 'No runs yet.';
+          return;
+        }
+        const rows = data
+          .map(
+            (run) =>
+              `<tr><td>${run.run_id}</td><td>${run.task}</td><td>${run.stages.length} stages</td></tr>`
+          )
+          .join('');
+        target.innerHTML = `<table><thead><tr><th>#</th><th>Task</th><th>Pipeline</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      async function refreshPanels() {
+        await Promise.all([loadHealth(), loadDashboard(), loadHistory()]);
       }
 
       document.getElementById('builder-form').addEventListener('submit', async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
-        const payload = {
-          task: form.task.value,
-          context: form.context.value,
-        };
-
-        const response = await fetch('/builder/run', {
+        const data = await fetchJson('/builder/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ task: form.task.value, context: form.context.value }),
         });
-        const data = await response.json();
         document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+        await refreshPanels();
       });
 
-      loadHealth();
+      document.getElementById('evolve-button').addEventListener('click', async () => {
+        const data = await fetchJson('/builder/evolve', { method: 'POST' });
+        document.getElementById('evolution').textContent = JSON.stringify(data, null, 2);
+      });
+
+      refreshPanels();
     </script>
   </body>
 </html>
