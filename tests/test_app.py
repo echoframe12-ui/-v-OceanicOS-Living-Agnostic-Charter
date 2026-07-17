@@ -189,6 +189,46 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(builds.status_code, 200)
         self.assertTrue(builds.get_json())
 
+    def test_workspace_and_calendar_tools(self):
+        write = self.client.post(
+            "/tools/file_write",
+            data=json.dumps({"path": "api-note.txt", "content": "hello from the api"}),
+            content_type="application/json",
+        )
+        self.assertEqual(write.status_code, 200)
+        self.assertTrue(write.get_json()["written"])
+
+        read = self.client.post(
+            "/tools/file_read",
+            data=json.dumps({"path": "api-note.txt"}),
+            content_type="application/json",
+        )
+        self.assertEqual(read.status_code, 200)
+        self.assertEqual(read.get_json()["content"], "hello from the api")
+
+        escape = self.client.post(
+            "/tools/file_read",
+            data=json.dumps({"path": "../secrets.txt"}),
+            content_type="application/json",
+        )
+        self.assertEqual(escape.status_code, 400)
+
+        event = self.client.post(
+            "/tools/calendar_add",
+            data=json.dumps({"title": "Charter sync", "when": "2026-08-01T10:00:00Z"}),
+            content_type="application/json",
+        )
+        self.assertEqual(event.status_code, 200)
+        self.assertEqual(event.get_json()["title"], "Charter sync")
+
+        events = self.client.post(
+            "/tools/calendar_list",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        self.assertEqual(events.status_code, 200)
+        self.assertGreaterEqual(events.get_json()["count"], 1)
+
     def test_models_listing_endpoint(self):
         response = self.client.get("/models")
         self.assertEqual(response.status_code, 200)

@@ -14,6 +14,7 @@ from plugins import PluginRegistry
 from review import ReviewEngine
 from server import OceanicOSService
 from state import StateSnapshot
+from tool_plugins import install_tool_plugins
 from workflows import WorkflowEngine
 
 
@@ -40,6 +41,7 @@ class UniversalBuilder:
         artifact_registry: ArtifactRegistry | None = None,
         dashboard: Dashboard | None = None,
         plugin_registry: PluginRegistry | None = None,
+        workspace_root: str | None = None,
     ) -> None:
         self.service = service or OceanicOSService()
         self.planner = planner or Planner()
@@ -56,6 +58,11 @@ class UniversalBuilder:
         self.dashboard = dashboard or Dashboard()
         self.plugin_registry = plugin_registry or PluginRegistry()
         self.plugin_registry.register("builder", ["plan", "execute", "review", "evolve"])
+        self.tool_plugins = install_tool_plugins(self.service, workspace_root)
+        self.plugin_registry.register(
+            "workspace-files", ["file_list", "file_read", "file_write"]
+        )
+        self.plugin_registry.register("calendar", ["calendar_add", "calendar_list"])
         self._runs: list[dict[str, Any]] = []
 
     def run(self, task: str, context: str | None = None) -> dict[str, Any]:
@@ -101,6 +108,23 @@ class UniversalBuilder:
         self.dashboard.add(task, "build", "complete")
         stages.append("artifact")
 
+        plan_lines = "\n".join(
+            f"- {step['name']}: {step['description']}" for step in plan["steps"]
+        )
+        build_file = self.service.invoke_tool(
+            "file_write",
+            {
+                "path": f"builds/{artifact['name']}.md",
+                "content": (
+                    f"# Build run {run_id}: {task}\n\n"
+                    f"Context: {context or 'general'}\n\n"
+                    f"## Plan\n\n{plan_lines}\n\n"
+                    f"## Model\n\nRouted to adapter: {model_result['adapter']}\n"
+                ),
+            },
+        )
+        stages.append("workspace")
+
         self.service.store_memory(
             {
                 "text": f"Build run {run_id}: {task}",
@@ -126,6 +150,7 @@ class UniversalBuilder:
             "review": review,
             "decision": decision,
             "artifact": artifact,
+            "build_file": build_file,
             "state": self.state_snapshot.snapshot(),
         }
         self._runs.append(
@@ -164,7 +189,11 @@ class UniversalBuilder:
             next_steps.append(
                 "Connect a real model provider (set ANTHROPIC_API_KEY to enable the Claude adapter)"
             )
-        next_steps.append("Register external tool plugins (GitHub, calendar, files)")
+        tool_names = {tool["name"] for tool in self.service.list_tools()}
+        if "file_write" not in tool_names:
+            next_steps.append("Install the workspace tool plugins (files, calendar)")
+        else:
+            next_steps.append("Add a GitHub tool plugin for repository operations")
         next_steps.append("Grow the layer directories with working engine implementations")
 
         return {

@@ -51,6 +51,14 @@ class OceanicOSService:
                 """
             )
 
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
+
+    def register_tool(self, name: str, handler: Any) -> dict[str, Any]:
+        self._tools[name] = handler
+        return {"registered": True, "name": name}
+
     def health(self) -> dict[str, Any]:
         return {
             "status": "ok",

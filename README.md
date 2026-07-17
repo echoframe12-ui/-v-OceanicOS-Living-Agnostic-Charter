@@ -184,6 +184,20 @@ curl -X POST http://127.0.0.1:5000/models/route -H 'Content-Type: application/js
 
 Without the key, the app runs fully offline on the demo adapters.
 
+## Tool Plugins
+
+The tool registry ships with plugins beyond the built-in `echo`, `timestamp`, and `word_count` tools ([tool_plugins.py](tool_plugins.py)):
+
+- `file_list`, `file_read`, `file_write` — file operations sandboxed to the workspace directory (`OCEANICOS_WORKSPACE`, default `workspace/`); paths that escape the sandbox are rejected
+- `calendar_add`, `calendar_list` — calendar events persisted to the OceanicOS SQLite database
+
+Every builder run also writes its build as a markdown file under `workspace/builds/`, so each run leaves a human-readable record on disk:
+
+```bash
+curl -X POST http://127.0.0.1:5000/tools/file_write -H 'Content-Type: application/json' -d '{"path": "notes/idea.md", "content": "Reality before assumption."}'
+curl -X POST http://127.0.0.1:5000/tools/calendar_add -H 'Content-Type: application/json' -d '{"title": "Charter review", "when": "2026-08-01T10:00:00Z"}'
+```
+
 ## Scope
 
 This charter is intended to guide:
