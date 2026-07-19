@@ -109,7 +109,10 @@ Use the endpoints:
 - GET /plans/trace
 - GET /models
 - POST /models/route
+- POST /models/consensus
 - GET /builds
+- GET /builds/export
+- GET /attestations
 - POST /agent/run
 - GET /agent/events
 - POST /state
@@ -197,6 +200,16 @@ Every builder run also writes its build as a markdown file under `workspace/buil
 curl -X POST http://127.0.0.1:5000/tools/file_write -H 'Content-Type: application/json' -d '{"path": "notes/idea.md", "content": "Reality before assumption."}'
 curl -X POST http://127.0.0.1:5000/tools/calendar_add -H 'Content-Type: application/json' -d '{"title": "Charter review", "when": "2026-08-01T10:00:00Z"}'
 ```
+
+## Validated Hesitation (Friction Protocol)
+
+OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation.md](DECISIONS/0001-validated-hesitation.md)):
+
+- Every builder run produces an attestation ([attestation.py](attestation.py)): a SHA-256 hash of the build record, a deterministic confidence score, the 0.74 threshold it was judged against, and the source trail of pipeline stages.
+- Builds below the threshold are **held** — their review is never auto-approved, and the evolution report calls for a human to resolve them. Running a build without a context is treated as missing evidence.
+- `POST /models/consensus` runs every matching adapter in parallel and surfaces disagreement (`"dissent": true`) as the primary output.
+- The browser UI is a monochrome verification terminal with a deliberate 2.5-second render delay; it reports hashes, confidence, and source trails, never a single "final" answer.
+- `GET /builds/export` degrades the build ledger gracefully into a spreadsheet (CSV).
 
 ## Scope
 

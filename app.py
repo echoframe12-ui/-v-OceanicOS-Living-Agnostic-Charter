@@ -1,9 +1,12 @@
+import csv
+import io
 import os
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from agent import AgentLoop
 from artifacts import ArtifactRegistry
+from attestation import AttestationEngine
 from claude_adapter import create_claude_adapter
 from dashboard import Dashboard
 from decisions import DecisionRegistry
@@ -35,6 +38,7 @@ decision_registry = DecisionRegistry()
 artifact_registry = ArtifactRegistry()
 dashboard = Dashboard()
 plugin_registry = PluginRegistry()
+attestation_engine = AttestationEngine()
 builder = UniversalBuilder(
     service=service,
     planner=planner,
@@ -47,6 +51,7 @@ builder = UniversalBuilder(
     artifact_registry=artifact_registry,
     dashboard=dashboard,
     plugin_registry=plugin_registry,
+    attestation_engine=attestation_engine,
 )
 
 
@@ -146,6 +151,41 @@ def route_model():
     payload = request.get_json(silent=True) or {}
     prompt = payload.get("prompt", "")
     return jsonify(model_router.route(prompt))
+
+
+@app.route("/models/consensus", methods=["POST"])
+def model_consensus():
+    payload = request.get_json(silent=True) or {}
+    prompt = payload.get("prompt", "")
+    return jsonify(model_router.route_all(prompt))
+
+
+@app.route("/attestations", methods=["GET"])
+def list_attestations():
+    return jsonify(attestation_engine.list())
+
+
+@app.route("/builds/export", methods=["GET"])
+def export_builds():
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["id", "task", "context", "artifact", "stages", "created_at"])
+    for build in service.list_builds():
+        writer.writerow(
+            [
+                build["id"],
+                build["task"],
+                build["context"],
+                build["artifact"],
+                "|".join(build["stages"]),
+                build["created_at"],
+            ]
+        )
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=oceanicos-builds.csv"},
+    )
 
 
 @app.route("/agent/run", methods=["POST"])

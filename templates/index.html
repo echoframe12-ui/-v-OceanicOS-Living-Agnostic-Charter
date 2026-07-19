@@ -3,135 +3,186 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Ω∞v OceanicOS Builder</title>
+    <title>Ω∞v OceanicOS Verification Terminal</title>
     <style>
+      * {
+        border-radius: 0 !important;
+        box-sizing: border-box;
+      }
       body {
-        font-family: Arial, sans-serif;
+        font-family: "IBM Plex Mono", "Courier New", monospace;
         margin: 0;
-        padding: 2rem;
-        background: #f6f8fb;
-        color: #14213d;
-        line-height: 1.5;
+        padding: 1.5rem;
+        background: #0a0a0a;
+        color: #e6e6e6;
+        line-height: 1.45;
+        font-size: 14px;
+      }
+      h1 {
+        font-size: 1.1rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border-bottom: 1px solid #e6e6e6;
+        padding-bottom: 0.5rem;
+      }
+      h2 {
+        font-size: 0.85rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #999;
+        margin: 0 0 0.75rem 0;
+      }
+      .mantra {
+        color: #999;
+        font-size: 0.8rem;
+        letter-spacing: 0.05em;
+      }
+      .cursor {
+        display: inline-block;
+        width: 0.6em;
+        height: 1em;
+        background: #e6e6e6;
+        vertical-align: text-bottom;
+        animation: blink 1.06s steps(1) infinite;
+      }
+      @keyframes blink {
+        50% { opacity: 0; }
       }
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
         gap: 1rem;
         align-items: start;
       }
-      .card {
-        background: white;
-        border: 1px solid #dbe4f0;
-        border-radius: 12px;
-        padding: 1rem 1.25rem;
-        margin-bottom: 1rem;
-        box-shadow: 0 4px 10px rgba(20, 33, 61, 0.05);
-      }
-      form {
-        display: grid;
-        gap: 0.75rem;
-      }
-      input,
-      textarea,
-      button {
-        font: inherit;
-        padding: 0.7rem;
-        border-radius: 8px;
-        border: 1px solid #cbd5e1;
-      }
-      button {
-        background: #0f766e;
-        color: white;
-        border: none;
-        cursor: pointer;
-      }
-      button.secondary {
-        background: #1e40af;
-      }
-      pre {
-        background: #0f172a;
-        color: #e2e8f0;
+      .panel {
+        background: #000;
+        border: 1px solid #333;
         padding: 1rem;
-        border-radius: 8px;
+        margin-bottom: 1rem;
+      }
+      form { display: grid; gap: 0.6rem; }
+      label { color: #999; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; }
+      input, textarea, button {
+        font: inherit;
+        padding: 0.55rem;
+        background: #0a0a0a;
+        color: #e6e6e6;
+        border: 1px solid #444;
+      }
+      button {
+        background: #e6e6e6;
+        color: #000;
+        border: 1px solid #e6e6e6;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-size: 0.8rem;
+      }
+      button:disabled { background: #333; color: #777; border-color: #333; cursor: wait; }
+      pre {
+        background: #000;
+        color: #cfcfcf;
+        padding: 0.75rem;
+        border: 1px solid #222;
         overflow-x: auto;
-        max-height: 24rem;
+        max-height: 22rem;
+        font-size: 0.78rem;
+        white-space: pre-wrap;
+        word-break: break-all;
       }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 0.4rem 0.6rem;
-        border-bottom: 1px solid #e2e8f0;
-        font-size: 0.95rem;
-      }
-      .status-pill {
-        display: inline-block;
-        padding: 0.1rem 0.6rem;
-        border-radius: 999px;
-        background: #d1fae5;
-        color: #065f46;
-        font-size: 0.85rem;
-      }
+      table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+      th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #222; }
+      th { color: #999; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.08em; }
+      .attest-hash { color: #7fbf7f; }
+      .attest-held { color: #bf7f7f; }
+      .dissent-true { color: #bf7f7f; font-weight: bold; }
+      .dissent-false { color: #7fbf7f; }
+      .computing { color: #999; }
+      a { color: #e6e6e6; }
+      .footer { color: #555; font-size: 0.7rem; margin-top: 1rem; border-top: 1px solid #222; padding-top: 0.5rem; }
     </style>
   </head>
   <body>
-    <h1>Ω∞v OceanicOS Universal Builder</h1>
-    <p>
-      Launch a full build run — planning, workflow execution, model routing, review,
-      decision, artifact, and persistent memory — then inspect the dashboard, run
-      history, and evolution report.
-    </p>
+    <h1>Ω∞v OceanicOS Verification Terminal<span class="cursor"></span></h1>
+    <p class="mantra">I don't generate; I attest. Certainty is a bug. Outputs carry hashes, confidence, and source trails — never a single "final" answer.</p>
 
     <div class="grid">
       <div>
-        <div class="card">
-          <h2>Builder</h2>
+        <div class="panel">
+          <h2>Build // Attest</h2>
           <form id="builder-form">
             <label for="task">Task</label>
             <input id="task" name="task" value="Draft a charter update" required />
-            <label for="context">Context</label>
-            <textarea id="context" name="context" rows="3">Governance update for the living charter.</textarea>
-            <button type="submit">Run build pipeline</button>
-            <button type="button" class="secondary" id="evolve-button">Evolution report</button>
+            <label for="context">Context (omitting it drops confidence below threshold — the build will be held)</label>
+            <textarea id="context" name="context" rows="2">Governance update for the living charter.</textarea>
+            <button type="submit" id="run-button">Run + Attest</button>
           </form>
         </div>
 
-        <div class="card">
-          <h2>Health</h2>
-          <div id="health">Loading…</div>
+        <div class="panel">
+          <h2>Consensus // Dissent</h2>
+          <form id="consensus-form">
+            <label for="prompt">Prompt (all matching adapters run; disagreement is the primary output)</label>
+            <input id="prompt" name="prompt" value="Plan the charter build" required />
+            <button type="submit" id="consensus-button">Query All Adapters</button>
+          </form>
+          <pre id="consensus-output">awaiting query…</pre>
         </div>
 
-        <div class="card">
-          <h2>Dashboard</h2>
-          <div id="dashboard">No builds yet.</div>
+        <div class="panel">
+          <h2>System</h2>
+          <div id="health">probing…</div>
+          <p><a href="/builds/export">⇩ export ledger (csv) — graceful degradation into a spreadsheet</a></p>
         </div>
 
-        <div class="card">
-          <h2>Run history</h2>
-          <div id="history">No runs yet.</div>
+        <div class="panel">
+          <h2>Run History</h2>
+          <div id="history">no runs on record.</div>
         </div>
       </div>
 
       <div>
-        <div class="card">
-          <h2>Output</h2>
-          <pre id="result">{}</pre>
+        <div class="panel">
+          <h2>Attestation</h2>
+          <div id="attestation">no attestation issued.</div>
         </div>
 
-        <div class="card">
-          <h2>Evolution</h2>
-          <pre id="evolution">Run the evolution report to see suggested next steps.</pre>
+        <div class="panel">
+          <h2>Raw Output</h2>
+          <pre id="result">{}</pre>
         </div>
       </div>
     </div>
 
+    <p class="footer">render delay: 2500ms (deliberate — computational cost made visible) · threshold: 0.74 · 🧠 ⛓️ 🌊</p>
+
     <script>
+      const RENDER_DELAY_MS = 2500;
+
+      function delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
       async function fetchJson(url, options) {
         const response = await fetch(url, options);
         return response.json();
+      }
+
+      async function withFriction(button, statusEl, work) {
+        button.disabled = true;
+        const started = Date.now();
+        const tick = setInterval(() => {
+          statusEl.textContent = `COMPUTING… ${((Date.now() - started) / 1000).toFixed(1)}s — you are feeling the weight of this decision`;
+          statusEl.className = 'computing';
+        }, 100);
+        try {
+          const [data] = await Promise.all([work(), delay(RENDER_DELAY_MS)]);
+          return data;
+        } finally {
+          clearInterval(tick);
+          statusEl.className = '';
+          button.disabled = false;
+        }
       }
 
       async function loadHealth() {
@@ -139,60 +190,75 @@
         document.getElementById('health').textContent = JSON.stringify(data);
       }
 
-      async function loadDashboard() {
-        const data = await fetchJson('/dashboard');
-        const target = document.getElementById('dashboard');
-        if (!data.items || data.items.length === 0) {
-          target.textContent = 'No builds yet.';
-          return;
-        }
-        const rows = data.items
-          .map(
-            (item) =>
-              `<tr><td>${item.title}</td><td>${item.kind}</td><td><span class="status-pill">${item.status}</span></td></tr>`
-          )
-          .join('');
-        target.innerHTML = `<table><thead><tr><th>Title</th><th>Kind</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
-      }
-
       async function loadHistory() {
         const data = await fetchJson('/builder/history');
         const target = document.getElementById('history');
         if (!data || data.length === 0) {
-          target.textContent = 'No runs yet.';
+          target.textContent = 'no runs on record.';
           return;
         }
         const rows = data
           .map(
             (run) =>
-              `<tr><td>${run.run_id}</td><td>${run.task}</td><td>${run.stages.length} stages</td></tr>`
+              `<tr><td>${run.run_id}</td><td>${run.task}</td><td>${run.confidence.toFixed(2)}</td><td class="${run.attestation === 'held' ? 'attest-held' : 'attest-hash'}">${run.attestation}</td></tr>`
           )
           .join('');
-        target.innerHTML = `<table><thead><tr><th>#</th><th>Task</th><th>Pipeline</th></tr></thead><tbody>${rows}</tbody></table>`;
+        target.innerHTML = `<table><thead><tr><th>#</th><th>Task</th><th>Conf</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
       }
 
-      async function refreshPanels() {
-        await Promise.all([loadHealth(), loadDashboard(), loadHistory()]);
+      function renderAttestation(att) {
+        const held = att.status === 'held';
+        document.getElementById('attestation').innerHTML = `
+          <table>
+            <tr><th>subject</th><td>${att.subject}</td></tr>
+            <tr><th>sha256</th><td class="attest-hash">${att.sha256}</td></tr>
+            <tr><th>confidence</th><td>${att.confidence.toFixed(2)} / threshold ${att.threshold}</td></tr>
+            <tr><th>status</th><td class="${held ? 'attest-held' : 'attest-hash'}">${att.status.toUpperCase()}${held ? ' — human review required; nothing auto-approved' : ''}</td></tr>
+            <tr><th>source trail</th><td>${att.sources.join(' → ')}</td></tr>
+          </table>`;
       }
 
       document.getElementById('builder-form').addEventListener('submit', async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
-        const data = await fetchJson('/builder/run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task: form.task.value, context: form.context.value }),
-        });
-        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
-        await refreshPanels();
+        const resultEl = document.getElementById('result');
+        const payload = { task: form.task.value };
+        if (form.context.value.trim()) payload.context = form.context.value;
+        const data = await withFriction(
+          document.getElementById('run-button'),
+          resultEl,
+          () => fetchJson('/builder/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+        );
+        renderAttestation(data.attestation);
+        resultEl.textContent = JSON.stringify(data, null, 2);
+        await Promise.all([loadHealth(), loadHistory()]);
       });
 
-      document.getElementById('evolve-button').addEventListener('click', async () => {
-        const data = await fetchJson('/builder/evolve', { method: 'POST' });
-        document.getElementById('evolution').textContent = JSON.stringify(data, null, 2);
+      document.getElementById('consensus-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const outputEl = document.getElementById('consensus-output');
+        const data = await withFriction(
+          document.getElementById('consensus-button'),
+          outputEl,
+          () => fetchJson('/models/consensus', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: form.prompt.value }),
+          })
+        );
+        const verdict = data.dissent
+          ? '<span class="dissent-true">DISSENT — adapters disagree; disagreement is the output</span>'
+          : '<span class="dissent-false">CONSENSUS across ' + data.adapters.length + ' adapter(s)</span>';
+        outputEl.innerHTML = verdict + '\n\n' + JSON.stringify(data, null, 2);
       });
 
-      refreshPanels();
+      loadHealth();
+      loadHistory();
     </script>
   </body>
 </html>

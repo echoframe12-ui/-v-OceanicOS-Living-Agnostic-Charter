@@ -31,6 +31,7 @@ class UniversalBuilderTests(unittest.TestCase):
                 "decision",
                 "artifact",
                 "workspace",
+                "attest",
                 "memory",
                 "ledger",
             ],
@@ -38,6 +39,22 @@ class UniversalBuilderTests(unittest.TestCase):
         self.assertEqual(result["review"]["status"], "approved")
         self.assertEqual(result["artifact"]["status"], "complete")
         self.assertTrue(result["workflow"]["executed"])
+        self.assertEqual(result["attestation"]["status"], "attested")
+        self.assertGreaterEqual(result["attestation"]["confidence"], 0.74)
+        self.assertEqual(len(result["attestation"]["sha256"]), 64)
+
+    def test_run_without_context_is_held_for_review(self):
+        builder = make_builder()
+        result = builder.run("Build the charter platform")
+        self.assertEqual(result["attestation"]["status"], "held")
+        self.assertLess(result["attestation"]["confidence"], 0.74)
+        self.assertEqual(result["review"]["status"], "pending")
+
+        report = builder.evolve()
+        self.assertEqual(report["attestations"]["held"], 1)
+        self.assertTrue(
+            any("held attestation" in step for step in report["next_steps"])
+        )
 
     def test_run_writes_build_file_to_workspace(self):
         builder = make_builder()
@@ -65,11 +82,12 @@ class UniversalBuilderTests(unittest.TestCase):
         self.assertEqual(report["runs"], 0)
         self.assertIn("Run the builder on a first task to seed the pipeline", report["next_steps"])
 
-        builder.run("Build the charter platform")
+        builder.run("Build the charter platform", "Open orchestration")
         report = builder.evolve()
         self.assertEqual(report["runs"], 1)
         self.assertEqual(report["artifacts"], 1)
         self.assertEqual(report["reviews"]["pending"], 0)
+        self.assertEqual(report["attestations"]["held"], 0)
         self.assertGreaterEqual(report["persisted_builds"], 1)
         self.assertTrue(report["next_steps"])
 

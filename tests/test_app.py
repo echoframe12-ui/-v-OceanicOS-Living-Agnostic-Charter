@@ -180,6 +180,27 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(response.get_json()["model"]["adapter"], "reasoning")
         self.assertEqual(response.get_json()["review"]["status"], "approved")
         self.assertIn("ledger", response.get_json()["stages"])
+        self.assertEqual(response.get_json()["attestation"]["status"], "attested")
+
+        attestations = self.client.get("/attestations")
+        self.assertEqual(attestations.status_code, 200)
+        self.assertTrue(attestations.get_json())
+
+        export = self.client.get("/builds/export")
+        self.assertEqual(export.status_code, 200)
+        self.assertIn("text/csv", export.content_type)
+        self.assertTrue(export.get_data(as_text=True).startswith("id,task,context"))
+
+    def test_model_consensus_endpoint(self):
+        response = self.client.post(
+            "/models/consensus",
+            data=json.dumps({"prompt": "Plan the charter build"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIn("dissent", payload)
+        self.assertTrue(payload["results"])
 
         history = self.client.get("/builder/history")
         self.assertEqual(history.status_code, 200)

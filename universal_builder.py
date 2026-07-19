@@ -6,6 +6,7 @@ from typing import Any
 
 from agent import AgentLoop
 from artifacts import ArtifactRegistry
+from attestation import AttestationEngine, score_confidence
 from dashboard import Dashboard
 from decisions import DecisionRegistry
 from models import ModelAdapter, ModelRouter
@@ -42,6 +43,7 @@ class UniversalBuilder:
         dashboard: Dashboard | None = None,
         plugin_registry: PluginRegistry | None = None,
         workspace_root: str | None = None,
+        attestation_engine: AttestationEngine | None = None,
     ) -> None:
         self.service = service or OceanicOSService()
         self.planner = planner or Planner()
@@ -63,6 +65,7 @@ class UniversalBuilder:
             "workspace-files", ["file_list", "file_read", "file_write"]
         )
         self.plugin_registry.register("calendar", ["calendar_add", "calendar_list"])
+        self.attestation_engine = attestation_engine or AttestationEngine()
         self._runs: list[dict[str, Any]] = []
 
     def run(self, task: str, context: str | None = None) -> dict[str, Any]:
@@ -89,8 +92,7 @@ class UniversalBuilder:
         stages.append("agent")
 
         proposal = f"Build run {run_id}: {task}"
-        self.review_engine.submit(proposal, "universal-builder")
-        review = self.review_engine.approve(proposal)
+        review = self.review_engine.submit(proposal, "universal-builder")
         stages.append("review")
 
         decision = self.decision_registry.record(
@@ -111,19 +113,28 @@ class UniversalBuilder:
         plan_lines = "\n".join(
             f"- {step['name']}: {step['description']}" for step in plan["steps"]
         )
+        build_content = (
+            f"# Build run {run_id}: {task}\n\n"
+            f"Context: {context or 'general'}\n\n"
+            f"## Plan\n\n{plan_lines}\n\n"
+            f"## Model\n\nRouted to adapter: {model_result['adapter']}\n"
+        )
         build_file = self.service.invoke_tool(
             "file_write",
-            {
-                "path": f"builds/{artifact['name']}.md",
-                "content": (
-                    f"# Build run {run_id}: {task}\n\n"
-                    f"Context: {context or 'general'}\n\n"
-                    f"## Plan\n\n{plan_lines}\n\n"
-                    f"## Model\n\nRouted to adapter: {model_result['adapter']}\n"
-                ),
-            },
+            {"path": f"builds/{artifact['name']}.md", "content": build_content},
         )
         stages.append("workspace")
+
+        confidence = score_confidence(stages, context is not None)
+        attestation = self.attestation_engine.attest(
+            f"build-{run_id}",
+            build_content,
+            sources=stages + [f"workspace:{build_file['path']}"],
+            confidence=confidence,
+        )
+        if attestation["status"] == "attested":
+            review = self.review_engine.approve(proposal)
+        stages.append("attest")
 
         self.service.store_memory(
             {
@@ -151,6 +162,7 @@ class UniversalBuilder:
             "decision": decision,
             "artifact": artifact,
             "build_file": build_file,
+            "attestation": attestation,
             "state": self.state_snapshot.snapshot(),
         }
         self._runs.append(
@@ -160,6 +172,8 @@ class UniversalBuilder:
                 "context": context or "general",
                 "stages": stages,
                 "artifact": artifact["name"],
+                "attestation": attestation["status"],
+                "confidence": attestation["confidence"],
             }
         )
         return result
@@ -177,9 +191,15 @@ class UniversalBuilder:
         pending_reviews = [r for r in reviews if r["status"] == "pending"]
         draft_artifacts = [a for a in artifacts if a["status"] == "draft"]
 
+        held_attestations = self.attestation_engine.held()
+
         next_steps: list[str] = []
         if not self._runs:
             next_steps.append("Run the builder on a first task to seed the pipeline")
+        if held_attestations:
+            next_steps.append(
+                f"Review {len(held_attestations)} held attestation(s) — below-threshold builds need a human squint"
+            )
         if pending_reviews:
             next_steps.append(f"Resolve {len(pending_reviews)} pending review(s)")
         if draft_artifacts:
@@ -201,6 +221,10 @@ class UniversalBuilder:
             "persisted_builds": len(self.service.list_builds()),
             "artifacts": len(artifacts),
             "decisions": len(self.decision_registry.list()),
+            "attestations": {
+                "total": len(self.attestation_engine.list()),
+                "held": len(held_attestations),
+            },
             "reviews": {
                 "total": len(reviews),
                 "pending": len(pending_reviews),
