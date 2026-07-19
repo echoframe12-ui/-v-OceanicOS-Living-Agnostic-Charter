@@ -57,3 +57,21 @@ class AttestationEngine:
 
     def held(self) -> list[dict[str, Any]]:
         return [entry for entry in self._attestations if entry["status"] == "held"]
+
+    def cvi(self) -> dict[str, Any]:
+        """Composite Verification Index — evidence-weighted trust, 0.0 to 1.0.
+
+        Mean attestation confidence discounted by the held ratio. An empty
+        record scores 0.0: no evidence, no trust.
+        """
+        total = len(self._attestations)
+        if total == 0:
+            return {"cvi": 0.0, "samples": 0, "mean_confidence": 0.0, "held_ratio": 0.0}
+        mean_confidence = sum(a["confidence"] for a in self._attestations) / total
+        held_ratio = len(self.held()) / total
+        return {
+            "cvi": round(mean_confidence * (1 - held_ratio), 3),
+            "samples": total,
+            "mean_confidence": round(mean_confidence, 3),
+            "held_ratio": round(held_ratio, 3),
+        }

@@ -3,11 +3,45 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/static/brand/oceanicos-badge.png" />
     <title>Ω∞v OceanicOS Verification Terminal</title>
     <style>
       * {
         border-radius: 0 !important;
         box-sizing: border-box;
+      }
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: #000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        animation: boot 2.4s ease-in forwards;
+      }
+      #boot-splash img {
+        width: min(60vw, 340px);
+        object-fit: contain;
+      }
+      #boot-splash .tag {
+        font-family: "IBM Plex Mono", "Courier New", monospace;
+        color: #7fbf9f;
+        letter-spacing: 0.35em;
+        text-transform: uppercase;
+        font-size: 0.72rem;
+      }
+      #boot-splash .checksum {
+        font-family: "IBM Plex Mono", "Courier New", monospace;
+        color: #555;
+        letter-spacing: 0.2em;
+        font-size: 0.68rem;
+      }
+      @keyframes boot {
+        0%, 70% { opacity: 1; }
+        100% { opacity: 0; visibility: hidden; }
       }
       body {
         font-family: "IBM Plex Mono", "Courier New", monospace;
@@ -103,6 +137,12 @@
     </style>
   </head>
   <body>
+    <div id="boot-splash">
+      <img src="/static/brand/oceanicos-badge.png" alt="OceanicOS — Living Agnostic Charter" />
+      <div class="tag">Living Agnostic Charter</div>
+      <div class="checksum">checksum 0xΩ∞v · observer online</div>
+    </div>
+
     <h1>Ω∞v OceanicOS Verification Terminal<span class="cursor"></span></h1>
     <p class="mantra">I don't generate; I attest. Certainty is a bug. Outputs carry hashes, confidence, and source trails — never a single "final" answer.</p>
 
@@ -154,10 +194,10 @@
       </div>
     </div>
 
-    <p class="footer">render delay: 2500ms (deliberate — computational cost made visible) · threshold: 0.74 · 🧠 ⛓️ 🌊</p>
+    <p class="footer">render delay: 4000ms (deliberate — computational cost made visible) · threshold: 0.74 · checksum 0xΩ∞v · exit 0 (continues…) · 🧠 ⛓️ 🌊</p>
 
     <script>
-      const RENDER_DELAY_MS = 2500;
+      const RENDER_DELAY_MS = 4000;
 
       function delay(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -256,6 +296,11 @@
           : '<span class="dissent-false">CONSENSUS across ' + data.adapters.length + ' adapter(s)</span>';
         outputEl.innerHTML = verdict + '\n\n' + JSON.stringify(data, null, 2);
       });
+
+      const splash = document.getElementById('boot-splash');
+      if (splash) {
+        splash.addEventListener('animationend', () => splash.remove());
+      }
 
       loadHealth();
       loadHistory();

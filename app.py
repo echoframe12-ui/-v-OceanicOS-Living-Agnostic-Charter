@@ -1,6 +1,8 @@
 import csv
+import hashlib
 import io
 import os
+from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template, request
 
@@ -11,6 +13,7 @@ from claude_adapter import create_claude_adapter
 from dashboard import Dashboard
 from decisions import DecisionRegistry
 from models import ModelAdapter, ModelRouter
+from nodes import NodeRegistry
 from planner import Planner
 from plugins import PluginRegistry
 from review import ReviewEngine
@@ -28,6 +31,9 @@ model_router.register(ModelAdapter("local", "demo"))
 model_router.register(
     ModelAdapter("reasoning", "demo", keywords=["plan", "build", "design", "charter"])
 )
+model_router.register(
+    ModelAdapter("skeptic", "demo", keywords=["plan", "verify", "charter", "attest"])
+)
 claude_adapter = create_claude_adapter(keywords=["claude"])
 if claude_adapter is not None:
     model_router.register(claude_adapter)
@@ -39,6 +45,7 @@ artifact_registry = ArtifactRegistry()
 dashboard = Dashboard()
 plugin_registry = PluginRegistry()
 attestation_engine = AttestationEngine()
+node_registry = NodeRegistry()
 builder = UniversalBuilder(
     service=service,
     planner=planner,
@@ -157,7 +164,7 @@ def route_model():
 def model_consensus():
     payload = request.get_json(silent=True) or {}
     prompt = payload.get("prompt", "")
-    return jsonify(model_router.route_all(prompt))
+    return jsonify(model_router.route_all(prompt, panel=3))
 
 
 @app.route("/attestations", methods=["GET"])
@@ -185,6 +192,92 @@ def export_builds():
         buffer.getvalue(),
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=oceanicos-builds.csv"},
+    )
+
+
+@app.route("/builds/export.txt", methods=["GET"])
+def export_builds_txt():
+    lines = ["OCEANICOS BUILD LEDGER — PLAIN TEXT GROUND TRUTH", ""]
+    for build in service.list_builds():
+        lines.append(
+            f"[{build['id']}] {build['created_at']} :: {build['task']} "
+            f"(context: {build['context']}) -> {build['artifact']} "
+            f"[{'|'.join(build['stages'])}]"
+        )
+    if len(lines) == 2:
+        lines.append("(no builds on record)")
+    return Response("\n".join(lines) + "\n", mimetype="text/plain")
+
+
+@app.route("/cvi", methods=["GET"])
+def composite_verification_index():
+    return jsonify(attestation_engine.cvi())
+
+
+@app.route("/nodes", methods=["POST"])
+def mount_node():
+    payload = request.get_json(silent=True) or {}
+    name = payload.get("name", "")
+    flux = payload.get("flux", "high")
+    return jsonify(node_registry.mount(name, flux))
+
+
+@app.route("/nodes", methods=["GET"])
+def list_nodes():
+    return jsonify(node_registry.list())
+
+
+@app.route("/pricing", methods=["GET"])
+def pricing():
+    return jsonify(
+        {
+            "service": "Verification-as-a-Service (VaaS)",
+            "currency": "USD/month",
+            "tiers": [
+                {
+                    "name": "Attestor",
+                    "price": 8500,
+                    "includes": ["attestation API", "CVI", "csv/txt ledger exports"],
+                },
+                {
+                    "name": "Arbiter",
+                    "price": 25500,
+                    "includes": ["everything in Attestor", "3-adapter dissent panels", "held-review SLAs"],
+                },
+                {
+                    "name": "Sovereign",
+                    "price": 85000,
+                    "includes": [
+                        "everything in Arbiter",
+                        "on-prem binary distribution",
+                        "hardware-key (YubiKey) handoff",
+                        "no source escrow",
+                    ],
+                },
+            ],
+            "note": "The reference implementation remains open under the charter; commercial delivery is binary + hardware-key handoff.",
+        }
+    )
+
+
+@app.route("/observer", methods=["GET"])
+def observer():
+    constitution = Path(__file__).parent / "CONSTITUTION.md"
+    constitution_sha256 = (
+        hashlib.sha256(constitution.read_bytes()).hexdigest()
+        if constitution.exists()
+        else None
+    )
+    return jsonify(
+        {
+            "root": "/",
+            "observer": "sole read/write head",
+            "stateless": True,
+            "sigil": "0xΩ∞v",
+            "constitution_sha256": constitution_sha256,
+            "exit": 0,
+            "status": "continues",
+        }
     )
 
 

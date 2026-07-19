@@ -38,6 +38,22 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(entry["status"], "held")
         self.assertEqual(len(engine.held()), 1)
 
+    def test_cvi_with_no_evidence_is_zero(self):
+        engine = AttestationEngine()
+        report = engine.cvi()
+        self.assertEqual(report["cvi"], 0.0)
+        self.assertEqual(report["samples"], 0)
+
+    def test_cvi_discounts_held_attestations(self):
+        engine = AttestationEngine()
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.7)  # held
+        report = engine.cvi()
+        self.assertEqual(report["samples"], 2)
+        self.assertEqual(report["mean_confidence"], 0.8)
+        self.assertEqual(report["held_ratio"], 0.5)
+        self.assertEqual(report["cvi"], 0.4)
+
     def test_list_preserves_order_and_ids(self):
         engine = AttestationEngine()
         engine.attest("a", "one", [], 0.9)

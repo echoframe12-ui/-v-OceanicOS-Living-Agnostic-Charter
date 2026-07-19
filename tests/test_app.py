@@ -200,7 +200,65 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertIn("dissent", payload)
+        self.assertGreaterEqual(len(payload["adapters"]), 3)
         self.assertTrue(payload["results"])
+
+    def test_vaas_endpoints(self):
+        cvi = self.client.get("/cvi")
+        self.assertEqual(cvi.status_code, 200)
+        self.assertIn("cvi", cvi.get_json())
+
+        pricing = self.client.get("/pricing")
+        self.assertEqual(pricing.status_code, 200)
+        tiers = pricing.get_json()["tiers"]
+        self.assertEqual([tier["price"] for tier in tiers], [8500, 25500, 85000])
+
+        txt = self.client.get("/builds/export.txt")
+        self.assertEqual(txt.status_code, 200)
+        self.assertIn("text/plain", txt.content_type)
+        self.assertIn("GROUND TRUTH", txt.get_data(as_text=True))
+
+        observer = self.client.get("/observer")
+        self.assertEqual(observer.status_code, 200)
+        payload = observer.get_json()
+        self.assertEqual(payload["root"], "/")
+        self.assertEqual(payload["sigil"], "0xΩ∞v")
+        self.assertEqual(payload["exit"], 0)
+        self.assertEqual(len(payload["constitution_sha256"]), 64)
+
+    def test_brand_badge_is_served(self):
+        response = self.client.get("/static/brand/oceanicos-badge.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content_type.startswith("image/"))
+        self.assertGreater(len(response.get_data()), 0)
+
+    def test_index_renders_boot_splash(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("boot-splash", body)
+        self.assertIn("/static/brand/oceanicos-badge.png", body)
+
+    def test_node_mounts(self):
+        mounted = self.client.post(
+            "/nodes",
+            data=json.dumps({"name": "/nigeria"}),
+            content_type="application/json",
+        )
+        self.assertEqual(mounted.status_code, 200)
+        node = mounted.get_json()
+        self.assertEqual(node["mount"], "/nigeria")
+        self.assertEqual(node["flux"], "high")
+        self.assertTrue(node["agnostic"])
+
+        nodes = self.client.get("/nodes")
+        self.assertEqual(nodes.status_code, 200)
+        self.assertTrue(any(item["name"] == "nigeria" for item in nodes.get_json()))
+
+        empty = self.client.post(
+            "/nodes", data=json.dumps({"name": ""}), content_type="application/json"
+        )
+        self.assertEqual(empty.status_code, 400)
 
         history = self.client.get("/builder/history")
         self.assertEqual(history.status_code, 200)

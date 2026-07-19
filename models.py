@@ -39,18 +39,25 @@ class ModelRouter:
                 return adapter.generate(prompt)
         return self._adapters[0].generate(prompt)
 
-    def route_all(self, prompt: str) -> dict[str, Any]:
+    def route_all(self, prompt: str, panel: int | None = None) -> dict[str, Any]:
         """Run every matching adapter and surface disagreement as the output.
 
         When multiple adapters match a prompt, all of them run; dissent is
         reported whenever their results differ, instead of silently picking
-        a winner.
+        a winner. With `panel`, non-matching adapters fill the bench until
+        the panel size (or the adapter count) is reached.
         """
         if not self._adapters:
             raise ValueError("No adapters registered")
         matched = [adapter for adapter in self._adapters if adapter.matches(prompt)]
         if not matched:
             matched = [self._adapters[0]]
+        if panel is not None:
+            for adapter in self._adapters:
+                if len(matched) >= panel:
+                    break
+                if adapter not in matched:
+                    matched.append(adapter)
         results = [adapter.generate(prompt) for adapter in matched]
         distinct = {json.dumps(result, sort_keys=True, default=str) for result in results}
         return {

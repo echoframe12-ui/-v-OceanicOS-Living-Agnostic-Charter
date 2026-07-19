@@ -1,5 +1,7 @@
 # Ω∞v OceanicOS Living Agnostic Charter
 
+![OceanicOS — Living Agnostic Charter](static/brand/oceanicos-badge.png)
+
 This repository is the starting point for a living, agnostic charter for OceanicOS: a flexible framework for building open, resilient, and human-centered systems without locking the project into rigid assumptions.
 
 ## Status: Activated
@@ -112,7 +114,13 @@ Use the endpoints:
 - POST /models/consensus
 - GET /builds
 - GET /builds/export
+- GET /builds/export.txt
 - GET /attestations
+- GET /cvi
+- POST /nodes
+- GET /nodes
+- GET /pricing
+- GET /observer
 - POST /agent/run
 - GET /agent/events
 - POST /state
@@ -210,7 +218,15 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - Builds below the threshold are **held** — their review is never auto-approved, and the evolution report calls for a human to resolve them. Running a build without a context is treated as missing evidence.
 - `POST /models/consensus` runs every matching adapter in parallel and surfaces disagreement (`"dissent": true`) as the primary output.
 - The browser UI is a monochrome verification terminal with a deliberate 2.5-second render delay; it reports hashes, confidence, and source trails, never a single "final" answer.
-- `GET /builds/export` degrades the build ledger gracefully into a spreadsheet (CSV).
+- `GET /builds/export` degrades the build ledger gracefully into a spreadsheet (CSV); `GET /builds/export.txt` degrades one step further, into plain text.
+- `GET /cvi` reports the Composite Verification Index — mean attestation confidence discounted by the held ratio; no evidence scores 0.0.
+- `POST /models/consensus` convenes a 3-adapter dissent panel.
+- `GET /observer` reports the root process: stateless, sole read/write head, sigil checksum `0xΩ∞v`, and a real SHA-256 of the constitution.
+- The platform is offered commercially as Verification-as-a-Service — see [docs/VAAS.md](docs/VAAS.md) and `GET /pricing`.
+
+## Brand
+
+The identity carries the charter — fluid, agnostic, verified (see [docs/BRAND.md](docs/BRAND.md)). The verification terminal opens on the canonical badge as a brief boot splash, then hands off to the monochrome interface; the same badge is the favicon.
 
 ## Scope
 

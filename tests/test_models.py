@@ -40,6 +40,17 @@ class ModelRouterTests(unittest.TestCase):
         self.assertEqual(consensus["adapters"], ["local"])
         self.assertFalse(consensus["dissent"])
 
+    def test_route_all_panel_fills_the_bench(self):
+        router = ModelRouter()
+        router.register(ModelAdapter("local", "demo"))
+        router.register(ModelAdapter("reasoning", "demo", keywords=["plan"]))
+        router.register(ModelAdapter("skeptic", "demo", keywords=["verify"]))
+
+        consensus = router.route_all("Plan the build", panel=3)
+        self.assertEqual(len(consensus["adapters"]), 3)
+        self.assertEqual(consensus["adapters"][0], "reasoning")
+        self.assertTrue(consensus["dissent"])
+
     def test_router_lists_adapters(self):
         router = ModelRouter()
         router.register(ModelAdapter("local", "demo"))

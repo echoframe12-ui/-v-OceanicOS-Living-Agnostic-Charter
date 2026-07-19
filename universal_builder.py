@@ -220,6 +220,7 @@ class UniversalBuilder:
         next_steps.append("Grow the layer directories with working engine implementations")
 
         return {
+            "drift": "perpetual",
             "runs": len(self._runs),
             "persisted_builds": len(self.service.list_builds()),
             "artifacts": len(artifacts),
