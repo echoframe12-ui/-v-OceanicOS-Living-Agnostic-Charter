@@ -129,9 +129,11 @@ Use the endpoints:
 - GET /me/memory
 - GET /me/cvi
 - GET /me/quota
+- GET /me/usage
 - GET /admin/overview
 - GET /admin/users
 - POST /admin/users/<username>/tier
+- GET /admin/usage
 - POST /agent/run
 - GET /agent/events
 - POST /state

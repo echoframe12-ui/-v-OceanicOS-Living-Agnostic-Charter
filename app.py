@@ -19,6 +19,7 @@ from nodes import NodeRegistry
 from planner import Planner
 from plugins import PluginRegistry
 import quotas
+from usage import UsageLog
 from review import ReviewEngine
 from server import OceanicOSService
 from state import StateSnapshot
@@ -50,6 +51,7 @@ plugin_registry = PluginRegistry()
 attestation_engine = AttestationEngine()
 node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
+usage_log = UsageLog(str(service.db_path))
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
@@ -448,6 +450,7 @@ def run_builder():
         used = len(service.list_builds(actor=g.actor))
         status = quotas.quota_status(g.tier, used)
         if status["exceeded"]:
+            usage_log.record(g.actor, "quota_exceeded", g.tier, task)
             return (
                 jsonify(
                     {
@@ -461,6 +464,7 @@ def run_builder():
             )
 
     result = builder.run(task, context, actor=g.actor)
+    usage_log.record(g.actor, "build", g.tier, task)
     result["dashboard"] = dashboard.summary()
     return jsonify(result)
 
@@ -501,7 +505,16 @@ def auth_users():
 def admin_set_tier(username: str):
     payload = request.get_json(silent=True) or {}
     tier = payload.get("tier", "")
-    return jsonify(auth_registry.set_tier(username, tier))
+    result = auth_registry.set_tier(username, tier)
+    usage_log.record(username, "tier_change", tier, f"by {g.actor}")
+    return jsonify(result)
+
+
+@app.route("/admin/usage", methods=["GET"])
+@require_admin
+def admin_usage():
+    actor = request.args.get("actor")
+    return jsonify(usage_log.list(actor=actor))
 
 
 @app.route("/admin/users", methods=["GET"])
@@ -530,6 +543,7 @@ def admin_overview():
             "held": len(attestation_engine.held()),
             "cvi": attestation_engine.cvi()["cvi"],
             "actors": sorted({build["actor"] for build in builds}),
+            "usage": usage_log.summary()["by_action"],
         }
     )
 
@@ -564,6 +578,12 @@ def my_cvi():
 def my_quota():
     used = len(service.list_builds(actor=g.actor))
     return jsonify(quotas.quota_status(g.tier, used))
+
+
+@app.route("/me/usage", methods=["GET"])
+@require_auth
+def my_usage():
+    return jsonify(usage_log.list(actor=g.actor))
 
 
 @app.route("/plugins", methods=["POST"])

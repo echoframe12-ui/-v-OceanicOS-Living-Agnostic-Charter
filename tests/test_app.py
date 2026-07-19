@@ -268,6 +268,80 @@ class OceanicOSAppTests(unittest.TestCase):
         builds = self.client.get("/builds").get_json()
         self.assertTrue(any(b["actor"] == "builder-user" for b in builds))
 
+    def test_usage_is_logged_and_scoped(self):
+        token = self.client.post(
+            "/auth/register",
+            data=json.dumps({"username": "usage-user"}),
+            content_type="application/json",
+        ).get_json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+
+        self.client.post(
+            "/builder/run",
+            data=json.dumps({"task": "Logged build", "context": "audit"}),
+            content_type="application/json",
+            headers=auth,
+        )
+
+        usage = self.client.get("/me/usage", headers=auth).get_json()
+        self.assertTrue(any(e["action"] == "build" for e in usage))
+        self.assertTrue(all(e["actor"] == "usage-user" for e in usage))
+
+    def test_admin_usage_is_gated_and_records_tier_changes(self):
+        app_module.auth_registry.admin_users.add("audit-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "audit-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "audit-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            self.client.post(
+                "/admin/users/audit-member/tier",
+                data=json.dumps({"tier": "arbiter"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+
+            # member is forbidden from the admin audit log
+            forbidden = self.client.get(
+                "/admin/usage", headers={"Authorization": f"Bearer {member}"}
+            )
+            self.assertEqual(forbidden.status_code, 403)
+
+            events = self.client.get(
+                "/admin/usage?actor=audit-member",
+                headers={"Authorization": f"Bearer {admin}"},
+            ).get_json()
+            self.assertTrue(
+                any(e["action"] == "tier_change" and e["tier"] == "arbiter" for e in events)
+            )
+        finally:
+            app_module.auth_registry.admin_users.discard("audit-steward")
+
+    def test_quota_block_is_audited(self):
+        token = self.client.post(
+            "/auth/register",
+            data=json.dumps({"username": "blocked-user"}),
+            content_type="application/json",
+        ).get_json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+        with patch.dict(quotas.TIER_LIMITS, {"attestor": 0}):
+            blocked = self.client.post(
+                "/builder/run",
+                data=json.dumps({"task": "Nope", "context": "audit"}),
+                content_type="application/json",
+                headers=auth,
+            )
+            self.assertEqual(blocked.status_code, 429)
+        usage = self.client.get("/me/usage", headers=auth).get_json()
+        self.assertTrue(any(e["action"] == "quota_exceeded" for e in usage))
+
     def test_quota_view_and_enforcement(self):
         token = self.client.post(
             "/auth/register",
