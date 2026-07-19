@@ -22,6 +22,35 @@ class ModelRouterTests(unittest.TestCase):
         fallback = router.route("hello")
         self.assertEqual(fallback["adapter"], "local")
 
+    def test_route_all_surfaces_dissent(self):
+        router = ModelRouter()
+        router.register(ModelAdapter("alpha", "demo", keywords=["plan"]))
+        router.register(ModelAdapter("beta", "demo", keywords=["plan"]))
+
+        consensus = router.route_all("Plan the build")
+        self.assertEqual(consensus["adapters"], ["alpha", "beta"])
+        self.assertTrue(consensus["dissent"])
+
+    def test_route_all_falls_back_to_default_without_dissent(self):
+        router = ModelRouter()
+        router.register(ModelAdapter("local", "demo"))
+        router.register(ModelAdapter("reasoning", "demo", keywords=["plan"]))
+
+        consensus = router.route_all("hello")
+        self.assertEqual(consensus["adapters"], ["local"])
+        self.assertFalse(consensus["dissent"])
+
+    def test_route_all_panel_fills_the_bench(self):
+        router = ModelRouter()
+        router.register(ModelAdapter("local", "demo"))
+        router.register(ModelAdapter("reasoning", "demo", keywords=["plan"]))
+        router.register(ModelAdapter("skeptic", "demo", keywords=["verify"]))
+
+        consensus = router.route_all("Plan the build", panel=3)
+        self.assertEqual(len(consensus["adapters"]), 3)
+        self.assertEqual(consensus["adapters"][0], "reasoning")
+        self.assertTrue(consensus["dissent"])
+
     def test_router_lists_adapters(self):
         router = ModelRouter()
         router.register(ModelAdapter("local", "demo"))

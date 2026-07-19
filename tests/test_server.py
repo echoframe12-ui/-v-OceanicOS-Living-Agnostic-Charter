@@ -41,6 +41,13 @@ class OceanicOSServiceTests(unittest.TestCase):
         plugins = self.service.list_plugins()
         self.assertTrue(any(plugin["name"] == "github" for plugin in plugins))
 
+    def test_custom_tools_can_be_registered(self):
+        self.service.register_tool("shout", lambda payload: {"output": payload.get("text", "").upper()})
+        tools = {tool["name"] for tool in self.service.list_tools()}
+        self.assertIn("shout", tools)
+        result = self.service.invoke_tool("shout", {"text": "hello"})
+        self.assertEqual(result["output"], "HELLO")
+
     def test_timestamp_and_word_count_tools(self):
         tools = {tool["name"] for tool in self.service.list_tools()}
         self.assertIn("timestamp", tools)

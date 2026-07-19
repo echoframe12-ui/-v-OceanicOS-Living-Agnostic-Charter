@@ -17,3 +17,6 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run tests
         run: python -m pytest -q
+        env:
+          OCEANICOS_DB: /tmp/oceanicos-test.db
+          OCEANICOS_WORKSPACE: /tmp/oceanicos-workspace
