@@ -65,6 +65,7 @@ class UniversalBuilder:
             "workspace-files", ["file_list", "file_read", "file_write"]
         )
         self.plugin_registry.register("calendar", ["calendar_add", "calendar_list"])
+        self.plugin_registry.register("github", ["github_repo_info", "github_issues"])
         self.attestation_engine = attestation_engine or AttestationEngine()
         self._runs: list[dict[str, Any]] = []
 
@@ -212,8 +213,10 @@ class UniversalBuilder:
         tool_names = {tool["name"] for tool in self.service.list_tools()}
         if "file_write" not in tool_names:
             next_steps.append("Install the workspace tool plugins (files, calendar)")
-        else:
+        elif "github_repo_info" not in tool_names:
             next_steps.append("Add a GitHub tool plugin for repository operations")
+        else:
+            next_steps.append("Add authentication and multi-user support to the platform")
         next_steps.append("Grow the layer directories with working engine implementations")
 
         return {

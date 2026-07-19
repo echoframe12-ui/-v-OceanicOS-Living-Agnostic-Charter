@@ -90,6 +90,10 @@ class UniversalBuilderTests(unittest.TestCase):
         self.assertEqual(report["attestations"]["held"], 0)
         self.assertGreaterEqual(report["persisted_builds"], 1)
         self.assertTrue(report["next_steps"])
+        self.assertIn(
+            "Add authentication and multi-user support to the platform",
+            report["next_steps"],
+        )
 
 
 if __name__ == "__main__":

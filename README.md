@@ -193,6 +193,7 @@ The tool registry ships with plugins beyond the built-in `echo`, `timestamp`, an
 
 - `file_list`, `file_read`, `file_write` — file operations sandboxed to the workspace directory (`OCEANICOS_WORKSPACE`, default `workspace/`); paths that escape the sandbox are rejected
 - `calendar_add`, `calendar_list` — calendar events persisted to the OceanicOS SQLite database
+- `github_repo_info`, `github_issues` — read-only GitHub API tools (set `GITHUB_TOKEN` for private repos and higher rate limits). Successful responses are cached in a SQLite `ground_truth` table; when the network is unavailable, the tools return the cached copy marked `"stale": true` instead of failing
 
 Every builder run also writes its build as a markdown file under `workspace/builds/`, so each run leaves a human-readable record on disk:
 

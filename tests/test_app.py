@@ -210,6 +210,19 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(builds.status_code, 200)
         self.assertTrue(builds.get_json())
 
+    def test_github_tools_are_registered(self):
+        response = self.client.get("/tools")
+        tool_names = {tool["name"] for tool in response.get_json()}
+        self.assertIn("github_repo_info", tool_names)
+        self.assertIn("github_issues", tool_names)
+
+        missing = self.client.post(
+            "/tools/github_repo_info",
+            data=json.dumps({"owner": "octocat"}),
+            content_type="application/json",
+        )
+        self.assertEqual(missing.status_code, 400)
+
     def test_workspace_and_calendar_tools(self):
         write = self.client.post(
             "/tools/file_write",
