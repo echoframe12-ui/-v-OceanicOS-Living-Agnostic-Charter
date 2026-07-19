@@ -124,6 +124,10 @@ Use the endpoints:
 - POST /auth/register
 - GET /auth/whoami
 - GET /auth/users
+- GET /me/builds
+- GET /me/attestations
+- GET /me/memory
+- GET /me/cvi
 - POST /agent/run
 - GET /agent/events
 - POST /state
@@ -239,6 +243,13 @@ curl -X POST http://127.0.0.1:5000/builder/run -H 'Content-Type: application/jso
 ```
 
 Attribution is always on (unauthenticated requests are recorded as `anonymous`). To require a valid token on protected endpoints, set `OCEANICOS_REQUIRE_AUTH=1` — unauthenticated calls then return 401, while `/health`, `/observer`, and `/pricing` stay public. Tokens are stored only as SHA-256 hashes and shown exactly once.
+
+Your data is addressable as yours (see [DECISIONS/0003](DECISIONS/0003-per-user-data-scoping.md)): the `/me/*` views return only the authenticated actor's builds, attestations, memory, and CVI, while the global reads accept an optional `?actor=` filter and otherwise return the whole record — scoping is a lens, transparency is the default.
+
+```bash
+curl http://127.0.0.1:5000/me/builds -H 'Authorization: Bearer <token>'   # only your builds
+curl http://127.0.0.1:5000/me/cvi -H 'Authorization: Bearer <token>'      # your verification index
+```
 
 ## Brand
 

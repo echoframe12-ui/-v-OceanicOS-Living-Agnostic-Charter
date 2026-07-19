@@ -121,13 +121,14 @@ def create_plan():
 @require_auth
 def store_memory():
     payload = request.get_json(silent=True) or {}
-    return jsonify(service.store_memory(payload))
+    return jsonify(service.store_memory(payload, actor=g.actor))
 
 
 @app.route("/memory", methods=["GET"])
 def search_memory():
     query = request.args.get("query", "")
-    return jsonify(service.search_memory(query))
+    actor = request.args.get("actor")
+    return jsonify(service.search_memory(query, actor=actor))
 
 
 @app.route("/tools", methods=["GET"])
@@ -180,7 +181,8 @@ def list_models():
 
 @app.route("/builds", methods=["GET"])
 def list_builds():
-    return jsonify(service.list_builds())
+    actor = request.args.get("actor")
+    return jsonify(service.list_builds(actor=actor))
 
 
 @app.route("/models/route", methods=["POST"])
@@ -200,7 +202,8 @@ def model_consensus():
 
 @app.route("/attestations", methods=["GET"])
 def list_attestations():
-    return jsonify(attestation_engine.list())
+    actor = request.args.get("actor")
+    return jsonify(attestation_engine.list(actor=actor))
 
 
 @app.route("/builds/export", methods=["GET"])
@@ -440,6 +443,31 @@ def auth_whoami():
 @app.route("/auth/users", methods=["GET"])
 def auth_users():
     return jsonify(auth_registry.list_users())
+
+
+@app.route("/me/builds", methods=["GET"])
+@require_auth
+def my_builds():
+    return jsonify(service.list_builds(actor=g.actor))
+
+
+@app.route("/me/attestations", methods=["GET"])
+@require_auth
+def my_attestations():
+    return jsonify(attestation_engine.list(actor=g.actor))
+
+
+@app.route("/me/memory", methods=["GET"])
+@require_auth
+def my_memory():
+    query = request.args.get("query", "")
+    return jsonify(service.search_memory(query, actor=g.actor))
+
+
+@app.route("/me/cvi", methods=["GET"])
+@require_auth
+def my_cvi():
+    return jsonify(attestation_engine.cvi(actor=g.actor))
 
 
 @app.route("/plugins", methods=["POST"])

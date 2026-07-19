@@ -26,7 +26,8 @@ class OceanicOSService:
                 """
                 CREATE TABLE IF NOT EXISTS memory (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    payload TEXT NOT NULL
+                    payload TEXT NOT NULL,
+                    actor TEXT NOT NULL DEFAULT 'anonymous'
                 )
                 """
             )
@@ -78,19 +79,31 @@ class OceanicOSService:
             ],
         }
 
-    def store_memory(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def store_memory(
+        self, entry: dict[str, Any], actor: str = "anonymous"
+    ) -> dict[str, Any]:
         payload = json.dumps(entry)
         with sqlite3.connect(self._db_path) as conn:
-            conn.execute("INSERT INTO memory (payload) VALUES (?)", (payload,))
+            conn.execute(
+                "INSERT INTO memory (payload, actor) VALUES (?, ?)", (payload, actor)
+            )
         self._memory.append(entry)
         return {"stored": True, "count": len(self._memory)}
 
-    def search_memory(self, query: str) -> list[dict[str, Any]]:
+    def search_memory(
+        self, query: str, actor: str | None = None
+    ) -> list[dict[str, Any]]:
         q = query.lower()
         with sqlite3.connect(self._db_path) as conn:
-            rows = conn.execute("SELECT payload FROM memory").fetchall()
+            if actor is None:
+                rows = conn.execute("SELECT payload FROM memory").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT payload FROM memory WHERE actor = ?", (actor,)
+                ).fetchall()
         entries = [json.loads(row[0]) for row in rows]
-        self._memory = entries
+        if actor is None:
+            self._memory = entries
         return [entry for entry in entries if q in str(entry.get("text", "")).lower()]
 
     def list_tools(self) -> list[dict[str, Any]]:
@@ -140,11 +153,17 @@ class OceanicOSService:
             "created_at": created_at,
         }
 
-    def list_builds(self) -> list[dict[str, Any]]:
+    def list_builds(self, actor: str | None = None) -> list[dict[str, Any]]:
         with sqlite3.connect(self._db_path) as conn:
-            rows = conn.execute(
-                "SELECT id, task, context, artifact, stages, actor, created_at FROM builds ORDER BY id"
-            ).fetchall()
+            if actor is None:
+                rows = conn.execute(
+                    "SELECT id, task, context, artifact, stages, actor, created_at FROM builds ORDER BY id"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, task, context, artifact, stages, actor, created_at FROM builds WHERE actor = ? ORDER BY id",
+                    (actor,),
+                ).fetchall()
         return [
             {
                 "id": row[0],

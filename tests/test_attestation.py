@@ -44,6 +44,21 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(report["cvi"], 0.0)
         self.assertEqual(report["samples"], 0)
 
+    def test_attestations_are_scoped_by_actor(self):
+        engine = AttestationEngine()
+        engine.attest("a", "one", [], 0.9, actor="alice")
+        engine.attest("b", "two", [], 0.9, actor="bob")
+        self.assertEqual(len(engine.list()), 2)
+        self.assertEqual(len(engine.list(actor="alice")), 1)
+        self.assertEqual(engine.list(actor="alice")[0]["actor"], "alice")
+
+    def test_cvi_scopes_to_actor(self):
+        engine = AttestationEngine()
+        engine.attest("a", "one", [], 0.9, actor="alice")
+        engine.attest("b", "two", [], 0.5, actor="bob")  # held
+        self.assertEqual(engine.cvi(actor="alice")["cvi"], 0.9)
+        self.assertEqual(engine.cvi(actor="bob")["held_ratio"], 1.0)
+
     def test_cvi_discounts_held_attestations(self):
         engine = AttestationEngine()
         engine.attest("a", "one", [], 0.9)
