@@ -121,6 +121,9 @@ Use the endpoints:
 - GET /nodes
 - GET /pricing
 - GET /observer
+- POST /auth/register
+- GET /auth/whoami
+- GET /auth/users
 - POST /agent/run
 - GET /agent/events
 - POST /state
@@ -223,6 +226,19 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - `POST /models/consensus` convenes a 3-adapter dissent panel.
 - `GET /observer` reports the root process: stateless, sole read/write head, sigil checksum `0xΩ∞v`, and a real SHA-256 of the constitution.
 - The platform is offered commercially as Verification-as-a-Service — see [docs/VAAS.md](docs/VAAS.md) and `GET /pricing`.
+
+## Identity and Multi-User Attribution
+
+Register for a token and every action you take is attributed to you (see [DECISIONS/0002](DECISIONS/0002-identity-and-attribution.md)):
+
+```bash
+curl -X POST http://127.0.0.1:5000/auth/register -H 'Content-Type: application/json' -d '{"username": "alice"}'
+# -> {"username": "alice", "token": "<shown once>", "created_at": "..."}
+curl -X POST http://127.0.0.1:5000/builder/run -H 'Content-Type: application/json' -H 'Authorization: Bearer <token>' -d '{"task": "Ship it"}'
+# the build ledger and attestation trail now carry actor: alice
+```
+
+Attribution is always on (unauthenticated requests are recorded as `anonymous`). To require a valid token on protected endpoints, set `OCEANICOS_REQUIRE_AUTH=1` — unauthenticated calls then return 401, while `/health`, `/observer`, and `/pricing` stay public. Tokens are stored only as SHA-256 hashes and shown exactly once.
 
 ## Brand
 

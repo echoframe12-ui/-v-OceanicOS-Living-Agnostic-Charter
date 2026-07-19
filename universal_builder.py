@@ -69,7 +69,9 @@ class UniversalBuilder:
         self.attestation_engine = attestation_engine or AttestationEngine()
         self._runs: list[dict[str, Any]] = []
 
-    def run(self, task: str, context: str | None = None) -> dict[str, Any]:
+    def run(
+        self, task: str, context: str | None = None, actor: str = "anonymous"
+    ) -> dict[str, Any]:
         run_id = len(self._runs) + 1
         stages: list[str] = []
 
@@ -130,7 +132,7 @@ class UniversalBuilder:
         attestation = self.attestation_engine.attest(
             f"build-{run_id}",
             build_content,
-            sources=stages + [f"workspace:{build_file['path']}"],
+            sources=stages + [f"workspace:{build_file['path']}", f"actor:{actor}"],
             confidence=confidence,
         )
         if attestation["status"] == "attested":
@@ -147,13 +149,16 @@ class UniversalBuilder:
         self.state_snapshot.record("builder_run_complete", task)
         stages.append("memory")
 
-        self.service.record_build(task, context or "general", artifact["name"], stages)
+        self.service.record_build(
+            task, context or "general", artifact["name"], stages, actor=actor
+        )
         stages.append("ledger")
 
         result = {
             "run_id": run_id,
             "task": task,
             "context": context or "general",
+            "actor": actor,
             "stages": stages,
             "plan": plan,
             "workflow": workflow,
@@ -171,6 +176,7 @@ class UniversalBuilder:
                 "run_id": run_id,
                 "task": task,
                 "context": context or "general",
+                "actor": actor,
                 "stages": stages,
                 "artifact": artifact["name"],
                 "attestation": attestation["status"],

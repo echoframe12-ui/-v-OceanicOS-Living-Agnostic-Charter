@@ -56,6 +56,20 @@ class UniversalBuilderTests(unittest.TestCase):
             any("held attestation" in step for step in report["next_steps"])
         )
 
+    def test_run_attributes_actor(self):
+        builder = make_builder()
+        result = builder.run("Attributed build", "Identity", actor="alice")
+        self.assertEqual(result["actor"], "alice")
+        self.assertIn("actor:alice", result["attestation"]["sources"])
+
+        builds = builder.service.list_builds()
+        self.assertEqual(builds[-1]["actor"], "alice")
+
+    def test_run_defaults_to_anonymous_actor(self):
+        builder = make_builder()
+        result = builder.run("Unattributed build", "Identity")
+        self.assertEqual(result["actor"], "anonymous")
+
     def test_run_writes_build_file_to_workspace(self):
         builder = make_builder()
         result = builder.run("Build the charter platform", "Open orchestration")

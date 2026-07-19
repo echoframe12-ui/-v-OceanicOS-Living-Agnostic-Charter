@@ -2,13 +2,15 @@ import csv
 import hashlib
 import io
 import os
+from functools import wraps
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, g, jsonify, render_template, request
 
 from agent import AgentLoop
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
+from auth import ANONYMOUS, AuthRegistry
 from claude_adapter import create_claude_adapter
 from dashboard import Dashboard
 from decisions import DecisionRegistry
@@ -46,6 +48,8 @@ dashboard = Dashboard()
 plugin_registry = PluginRegistry()
 attestation_engine = AttestationEngine()
 node_registry = NodeRegistry()
+auth_registry = AuthRegistry()
+app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 builder = UniversalBuilder(
     service=service,
     planner=planner,
@@ -72,6 +76,30 @@ def handle_bad_request(error):
     return jsonify({"error": str(error)}), 400
 
 
+def _current_actor() -> str:
+    header = request.headers.get("Authorization", "")
+    token = header[7:] if header.startswith("Bearer ") else None
+    user = auth_registry.authenticate(token)
+    return user["username"] if user else ANONYMOUS
+
+
+def require_auth(view):
+    """Attribute every request to an actor; enforce a token when locked.
+
+    Attribution is always on (g.actor). Enforcement (401 without a valid
+    token) applies only when app.config['REQUIRE_AUTH'] is set.
+    """
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        g.actor = _current_actor()
+        if app.config.get("REQUIRE_AUTH") and g.actor == ANONYMOUS:
+            return jsonify({"error": "unauthorized"}), 401
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html")
@@ -90,6 +118,7 @@ def create_plan():
 
 
 @app.route("/memory", methods=["POST"])
+@require_auth
 def store_memory():
     payload = request.get_json(silent=True) or {}
     return jsonify(service.store_memory(payload))
@@ -107,6 +136,7 @@ def list_tools():
 
 
 @app.route("/tools/<name>", methods=["POST"])
+@require_auth
 def invoke_tool(name: str):
     payload = request.get_json(silent=True) or {}
     return jsonify(service.invoke_tool(name, payload))
@@ -161,6 +191,7 @@ def route_model():
 
 
 @app.route("/models/consensus", methods=["POST"])
+@require_auth
 def model_consensus():
     payload = request.get_json(silent=True) or {}
     prompt = payload.get("prompt", "")
@@ -176,7 +207,7 @@ def list_attestations():
 def export_builds():
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["id", "task", "context", "artifact", "stages", "created_at"])
+    writer.writerow(["id", "task", "context", "artifact", "stages", "actor", "created_at"])
     for build in service.list_builds():
         writer.writerow(
             [
@@ -185,6 +216,7 @@ def export_builds():
                 build["context"],
                 build["artifact"],
                 "|".join(build["stages"]),
+                build["actor"],
                 build["created_at"],
             ]
         )
@@ -201,7 +233,7 @@ def export_builds_txt():
     for build in service.list_builds():
         lines.append(
             f"[{build['id']}] {build['created_at']} :: {build['task']} "
-            f"(context: {build['context']}) -> {build['artifact']} "
+            f"(context: {build['context']}, actor: {build['actor']}) -> {build['artifact']} "
             f"[{'|'.join(build['stages'])}]"
         )
     if len(lines) == 2:
@@ -215,6 +247,7 @@ def composite_verification_index():
 
 
 @app.route("/nodes", methods=["POST"])
+@require_auth
 def mount_node():
     payload = request.get_json(silent=True) or {}
     name = payload.get("name", "")
@@ -370,12 +403,13 @@ def get_dashboard():
 
 
 @app.route("/builder/run", methods=["POST"])
+@require_auth
 def run_builder():
     payload = request.get_json(silent=True) or {}
     task = payload.get("task", "Draft a charter update")
     context = payload.get("context", "Open orchestration")
 
-    result = builder.run(task, context)
+    result = builder.run(task, context, actor=g.actor)
     result["dashboard"] = dashboard.summary()
     return jsonify(result)
 
@@ -386,8 +420,26 @@ def builder_history():
 
 
 @app.route("/builder/evolve", methods=["POST", "GET"])
+@require_auth
 def builder_evolve():
     return jsonify(builder.evolve())
+
+
+@app.route("/auth/register", methods=["POST"])
+def auth_register():
+    payload = request.get_json(silent=True) or {}
+    username = payload.get("username", "")
+    return jsonify(auth_registry.register(username))
+
+
+@app.route("/auth/whoami", methods=["GET"])
+def auth_whoami():
+    return jsonify({"actor": _current_actor()})
+
+
+@app.route("/auth/users", methods=["GET"])
+def auth_users():
+    return jsonify(auth_registry.list_users())
 
 
 @app.route("/plugins", methods=["POST"])

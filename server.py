@@ -46,6 +46,7 @@ class OceanicOSService:
                     context TEXT NOT NULL,
                     artifact TEXT NOT NULL,
                     stages TEXT NOT NULL,
+                    actor TEXT NOT NULL DEFAULT 'anonymous',
                     created_at TEXT NOT NULL
                 )
                 """
@@ -121,12 +122,13 @@ class OceanicOSService:
         context: str,
         artifact: str,
         stages: list[str],
+        actor: str = "anonymous",
     ) -> dict[str, Any]:
         created_at = datetime.now(timezone.utc).isoformat()
         with sqlite3.connect(self._db_path) as conn:
             cursor = conn.execute(
-                "INSERT INTO builds (task, context, artifact, stages, created_at) VALUES (?, ?, ?, ?, ?)",
-                (task, context, artifact, json.dumps(stages), created_at),
+                "INSERT INTO builds (task, context, artifact, stages, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (task, context, artifact, json.dumps(stages), actor, created_at),
             )
         return {
             "id": cursor.lastrowid,
@@ -134,13 +136,14 @@ class OceanicOSService:
             "context": context,
             "artifact": artifact,
             "stages": stages,
+            "actor": actor,
             "created_at": created_at,
         }
 
     def list_builds(self) -> list[dict[str, Any]]:
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute(
-                "SELECT id, task, context, artifact, stages, created_at FROM builds ORDER BY id"
+                "SELECT id, task, context, artifact, stages, actor, created_at FROM builds ORDER BY id"
             ).fetchall()
         return [
             {
@@ -149,7 +152,8 @@ class OceanicOSService:
                 "context": row[2],
                 "artifact": row[3],
                 "stages": json.loads(row[4]),
-                "created_at": row[5],
+                "actor": row[5],
+                "created_at": row[6],
             }
             for row in rows
         ]

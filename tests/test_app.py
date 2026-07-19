@@ -226,6 +226,77 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(payload["exit"], 0)
         self.assertEqual(len(payload["constitution_sha256"]), 64)
 
+    def test_auth_register_and_whoami(self):
+        registered = self.client.post(
+            "/auth/register",
+            data=json.dumps({"username": "operator"}),
+            content_type="application/json",
+        )
+        self.assertEqual(registered.status_code, 200)
+        token = registered.get_json()["token"]
+        self.assertTrue(token)
+
+        anon = self.client.get("/auth/whoami")
+        self.assertEqual(anon.get_json()["actor"], "anonymous")
+
+        known = self.client.get(
+            "/auth/whoami", headers={"Authorization": f"Bearer {token}"}
+        )
+        self.assertEqual(known.get_json()["actor"], "operator")
+
+        users = self.client.get("/auth/users")
+        self.assertTrue(any(u["username"] == "operator" for u in users.get_json()))
+        self.assertNotIn("token", users.get_json()[0])
+
+    def test_builder_run_attributes_actor(self):
+        token = self.client.post(
+            "/auth/register",
+            data=json.dumps({"username": "builder-user"}),
+            content_type="application/json",
+        ).get_json()["token"]
+
+        response = self.client.post(
+            "/builder/run",
+            data=json.dumps({"task": "Attributed build", "context": "Identity"}),
+            content_type="application/json",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["actor"], "builder-user")
+
+        builds = self.client.get("/builds").get_json()
+        self.assertTrue(any(b["actor"] == "builder-user" for b in builds))
+
+    def test_enforcement_mode_gates_protected_endpoints(self):
+        app_module.app.config["REQUIRE_AUTH"] = True
+        try:
+            unauth = self.client.post(
+                "/builder/run",
+                data=json.dumps({"task": "Locked"}),
+                content_type="application/json",
+            )
+            self.assertEqual(unauth.status_code, 401)
+
+            # public endpoints stay reachable while locked
+            self.assertEqual(self.client.get("/health").status_code, 200)
+            self.assertEqual(self.client.get("/observer").status_code, 200)
+
+            token = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "keyholder"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            authed = self.client.post(
+                "/builder/run",
+                data=json.dumps({"task": "Unlocked", "context": "ok"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(authed.status_code, 200)
+            self.assertEqual(authed.get_json()["actor"], "keyholder")
+        finally:
+            app_module.app.config["REQUIRE_AUTH"] = False
+
     def test_brand_badge_is_served(self):
         response = self.client.get("/static/brand/oceanicos-badge.png")
         self.assertEqual(response.status_code, 200)
