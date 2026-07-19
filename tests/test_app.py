@@ -203,6 +203,10 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("dissent", payload)
         self.assertGreaterEqual(len(payload["adapters"]), 3)
         self.assertTrue(payload["results"])
+        # dissent is now measured on real verdicts, not adapter identity
+        self.assertEqual(len(payload["verdicts"]), len(payload["adapters"]))
+        self.assertIn(payload["majority"], ("approve", "revise"))
+        self.assertTrue(payload["dissent"])
 
     def test_vaas_endpoints(self):
         cvi = self.client.get("/cvi")

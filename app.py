@@ -14,6 +14,7 @@ from auth import ANONYMOUS, AuthRegistry
 from claude_adapter import create_claude_adapter
 from dashboard import Dashboard
 from decisions import DecisionRegistry
+import models
 from models import ModelAdapter, ModelRouter
 from nodes import NodeRegistry
 from planner import Planner
@@ -31,12 +32,24 @@ service = OceanicOSService()
 workflow_engine = WorkflowEngine()
 planner = Planner()
 model_router = ModelRouter()
-model_router.register(ModelAdapter("local", "demo"))
 model_router.register(
-    ModelAdapter("reasoning", "demo", keywords=["plan", "build", "design", "charter"])
+    ModelAdapter("local", "demo", strategy=models.strategy_literal)
 )
 model_router.register(
-    ModelAdapter("skeptic", "demo", keywords=["plan", "verify", "charter", "attest"])
+    ModelAdapter(
+        "reasoning",
+        "demo",
+        keywords=["plan", "build", "design", "charter"],
+        strategy=models.strategy_optimist,
+    )
+)
+model_router.register(
+    ModelAdapter(
+        "skeptic",
+        "demo",
+        keywords=["plan", "verify", "charter", "attest"],
+        strategy=models.strategy_skeptic,
+    )
 )
 claude_adapter = create_claude_adapter(keywords=["claude"])
 if claude_adapter is not None:
