@@ -7,18 +7,46 @@ from typing import Any
 CONFIDENCE_THRESHOLD = 0.74
 
 
-def score_confidence(evidence: list[str], context_provided: bool) -> float:
-    """Deterministic confidence from observable evidence.
+def consensus_delta(verdicts: list[str]) -> float:
+    """Confidence adjustment from a dissent panel's verdicts.
+
+    Unanimous approval raises confidence; unanimous "revise" lowers it enough
+    to hold even a well-evidenced build; a split nudges by its majority.
+    Abstentions (adapters without a verdict) count for nothing — the panel
+    only moves the score when it actually has an opinion.
+    """
+    approve = verdicts.count("approve")
+    revise = verdicts.count("revise")
+    if approve == 0 and revise == 0:
+        return 0.0
+    if approve == len(verdicts):
+        return 0.1
+    if revise == len(verdicts):
+        return -0.2
+    if approve > revise:
+        return 0.05
+    if revise > approve:
+        return -0.1
+    return 0.0
+
+
+def score_confidence(
+    evidence: list[str], context_provided: bool, consensus: float = 0.0
+) -> float:
+    """Deterministic confidence from observable evidence and panel consensus.
 
     Each completed pipeline stage counts as evidence; a run without an
-    explicit context loses 0.2, dropping it below the threshold so it is
-    held for human review. This measures exactly what it claims to —
-    evidence count — and is never a claim of semantic certainty.
+    explicit context loses 0.2. The `consensus` delta (from a dissent panel's
+    verdicts) can then push a borderline build across the hold threshold in
+    either direction — surfacing disagreement into the decision, not beside
+    it. This measures exactly what it claims to and is never a claim of
+    semantic certainty.
     """
-    confidence = min(0.99, 0.5 + 0.05 * len(evidence))
+    confidence = 0.5 + 0.05 * len(evidence)
     if not context_provided:
         confidence -= 0.2
-    return round(max(0.0, confidence), 2)
+    confidence += consensus
+    return round(max(0.0, min(0.99, confidence)), 2)
 
 
 class AttestationEngine:

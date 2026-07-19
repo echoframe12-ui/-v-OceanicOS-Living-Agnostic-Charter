@@ -1,11 +1,33 @@
 import tempfile
 import unittest
 
+from models import (
+    ModelAdapter,
+    ModelRouter,
+    strategy_literal,
+    strategy_optimist,
+    strategy_skeptic,
+)
 from universal_builder import UniversalBuilder
 
 
 def make_builder():
     return UniversalBuilder(workspace_root=tempfile.mkdtemp(prefix="oceanicos-ws-"))
+
+
+def panel_router():
+    router = ModelRouter()
+    router.register(ModelAdapter("local", "demo", strategy=strategy_literal))
+    router.register(ModelAdapter("reasoning", "demo", keywords=["plan"], strategy=strategy_optimist))
+    router.register(ModelAdapter("skeptic", "demo", keywords=["verify"], strategy=strategy_skeptic))
+    return router
+
+
+def make_panel_builder():
+    return UniversalBuilder(
+        model_router=panel_router(),
+        workspace_root=tempfile.mkdtemp(prefix="oceanicos-ws-"),
+    )
 
 
 class UniversalBuilderTests(unittest.TestCase):
@@ -54,6 +76,34 @@ class UniversalBuilderTests(unittest.TestCase):
         self.assertEqual(report["attestations"]["held"], 1)
         self.assertTrue(
             any("held attestation" in step for step in report["next_steps"])
+        )
+
+    def test_unanimous_revise_holds_even_a_well_evidenced_build(self):
+        builder = make_panel_builder()
+        # "Draft a thorough governance overhaul" -> literal revise (>4 words),
+        # optimist revise (no plan/build/ship/design), skeptic revise (no evidence)
+        result = builder.run("Draft a thorough governance overhaul", "full context")
+        self.assertFalse(result["consensus"]["dissent"])
+        self.assertEqual(result["consensus"]["majority"], "revise")
+        self.assertEqual(result["attestation"]["status"], "held")
+        self.assertEqual(result["review"]["status"], "pending")
+
+    def test_unanimous_approve_rescues_a_context_free_build(self):
+        builder = make_panel_builder()
+        # "ship" -> literal approve (<=4 words), optimist approve (ship),
+        # skeptic revise (no evidence) ... not unanimous; use an all-approve prompt
+        # "plan verified" -> optimist approve (plan), skeptic approve (verified),
+        # literal approve (<=4 words) => unanimous approve
+        result = builder.run("plan verified", None)
+        self.assertEqual(result["consensus"]["majority"], "approve")
+        self.assertFalse(result["consensus"]["dissent"])
+        self.assertEqual(result["attestation"]["status"], "attested")
+
+    def test_consensus_is_recorded_in_the_attestation_trail(self):
+        builder = make_panel_builder()
+        result = builder.run("Plan the build", "ctx")
+        self.assertTrue(
+            any(s.startswith("consensus:") for s in result["attestation"]["sources"])
         )
 
     def test_run_attributes_actor(self):
