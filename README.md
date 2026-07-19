@@ -128,8 +128,10 @@ Use the endpoints:
 - GET /me/attestations
 - GET /me/memory
 - GET /me/cvi
+- GET /me/quota
 - GET /admin/overview
 - GET /admin/users
+- POST /admin/users/<username>/tier
 - POST /agent/run
 - GET /agent/events
 - POST /state
@@ -254,6 +256,10 @@ curl http://127.0.0.1:5000/me/cvi -H 'Authorization: Bearer <token>'      # your
 ```
 
 Stewardship is a role, not a free-for-all (see [DECISIONS/0004](DECISIONS/0004-admin-stewardship-role.md)): admins are appointed out-of-band with `OCEANICOS_ADMIN_USERS` (comma-separated usernames) and get aggregate cross-actor views (`/admin/overview`, `/admin/users`) — platform health and per-actor build counts, not the content of members' private slices. Non-admins get 403. Members can't promote themselves.
+
+The VaaS pricing tiers are enforced as real build quotas (see [DECISIONS/0005](DECISIONS/0005-per-tier-quotas.md)): new accounts default to **attestor** (10 builds), and an admin assigns tiers with `POST /admin/users/<username>/tier`. `/builder/run` returns **429** once a named actor hits its ceiling; `GET /me/quota` shows where you stand. The anonymous open path is unmetered.
+
+The whole journey, prompt 1 to now, is compressed in [docs/COMPRESS.md](docs/COMPRESS.md) — `Gap → VaaS → Ω∞v → Observer → 0`.
 
 ```bash
 OCEANICOS_ADMIN_USERS=root python app.py

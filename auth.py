@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quotas import DEFAULT_TIER, is_tier
+
 ANONYMOUS = "anonymous"
 
 
@@ -40,6 +42,7 @@ class AuthRegistry:
                     username TEXT PRIMARY KEY,
                     token_hash TEXT NOT NULL,
                     role TEXT NOT NULL DEFAULT 'member',
+                    tier TEXT NOT NULL DEFAULT 'attestor',
                     created_at TEXT NOT NULL
                 )
                 """
@@ -55,8 +58,8 @@ class AuthRegistry:
         try:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute(
-                    "INSERT INTO users (username, token_hash, role, created_at) VALUES (?, ?, ?, ?)",
-                    (cleaned, _hash_token(token), role, created_at),
+                    "INSERT INTO users (username, token_hash, role, tier, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (cleaned, _hash_token(token), role, DEFAULT_TIER, created_at),
                 )
         except sqlite3.IntegrityError as error:
             raise ValueError(f"Username already registered: {cleaned}") from error
@@ -64,30 +67,48 @@ class AuthRegistry:
             "username": cleaned,
             "token": token,
             "role": role,
+            "tier": DEFAULT_TIER,
             "created_at": created_at,
         }
+
+    def set_tier(self, username: str, tier: str) -> dict[str, Any]:
+        if not is_tier(tier):
+            raise ValueError(f"Unknown tier: {tier}")
+        with sqlite3.connect(self._db_path) as conn:
+            cursor = conn.execute(
+                "UPDATE users SET tier = ? WHERE username = ?", (tier, username)
+            )
+        if cursor.rowcount == 0:
+            raise KeyError(f"Unknown user: {username}")
+        return {"username": username, "tier": tier}
 
     def authenticate(self, token: str | None) -> dict[str, Any] | None:
         if not token:
             return None
         with sqlite3.connect(self._db_path) as conn:
             row = conn.execute(
-                "SELECT username, role, created_at FROM users WHERE token_hash = ?",
+                "SELECT username, role, tier, created_at FROM users WHERE token_hash = ?",
                 (_hash_token(token),),
             ).fetchone()
         if row is None:
             return None
-        return {"username": row[0], "role": row[1], "created_at": row[2]}
+        return {
+            "username": row[0],
+            "role": row[1],
+            "tier": row[2],
+            "created_at": row[3],
+        }
 
     def list_users(self, include_role: bool = False) -> list[dict[str, Any]]:
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute(
-                "SELECT username, role, created_at FROM users ORDER BY created_at"
+                "SELECT username, role, tier, created_at FROM users ORDER BY created_at"
             ).fetchall()
         result = []
         for row in rows:
-            entry = {"username": row[0], "created_at": row[2]}
+            entry = {"username": row[0], "created_at": row[3]}
             if include_role:
                 entry["role"] = row[1]
+                entry["tier"] = row[2]
             result.append(entry)
         return result

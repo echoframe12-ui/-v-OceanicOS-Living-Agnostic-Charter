@@ -11,13 +11,15 @@ computational cost of verification, made visible.
 
 ## Tiers (USD / month)
 
-| Tier | Price | Includes |
-| --- | --- | --- |
-| **Attestor** | $8,500 | Attestation API, Composite Verification Index (CVI), CSV/.txt ledger exports |
-| **Arbiter** | $25,500 | Everything in Attestor + 3-adapter dissent panels, held-review SLAs |
-| **Sovereign** | $85,000 | Everything in Arbiter + on-prem binary distribution, hardware-key (YubiKey) handoff, no source escrow |
+| Tier | Price | Build quota | Includes |
+| --- | --- | --- | --- |
+| **Attestor** | $8,500 | 10 builds | Attestation API, Composite Verification Index (CVI), CSV/.txt ledger exports |
+| **Arbiter** | $25,500 | 50 builds | Everything in Attestor + 3-adapter dissent panels, held-review SLAs |
+| **Sovereign** | $85,000 | unlimited | Everything in Arbiter + on-prem binary distribution, hardware-key (YubiKey) handoff, no source escrow |
 
-Live tier data: `GET /pricing`.
+Live tier data: `GET /pricing`. The build quota is enforced per named account
+(`GET /me/quota`); an admin assigns tiers (`POST /admin/users/<username>/tier`).
+See [DECISIONS/0005](../DECISIONS/0005-per-tier-quotas.md).
 
 ## Composite Verification Index
 

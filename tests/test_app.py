@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import app as app_module
+import quotas
 from app import app
 
 
@@ -266,6 +267,78 @@ class OceanicOSAppTests(unittest.TestCase):
 
         builds = self.client.get("/builds").get_json()
         self.assertTrue(any(b["actor"] == "builder-user" for b in builds))
+
+    def test_quota_view_and_enforcement(self):
+        token = self.client.post(
+            "/auth/register",
+            data=json.dumps({"username": "quota-user"}),
+            content_type="application/json",
+        ).get_json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+
+        quota = self.client.get("/me/quota", headers=auth).get_json()
+        self.assertEqual(quota["tier"], "attestor")
+        self.assertEqual(quota["used"], 0)
+        self.assertFalse(quota["exceeded"])
+
+        # tighten the attestor limit to 1 for a fast, deterministic 429
+        with patch.dict(quotas.TIER_LIMITS, {"attestor": 1}):
+            first = self.client.post(
+                "/builder/run",
+                data=json.dumps({"task": "First", "context": "quota"}),
+                content_type="application/json",
+                headers=auth,
+            )
+            self.assertEqual(first.status_code, 200)
+
+            blocked = self.client.post(
+                "/builder/run",
+                data=json.dumps({"task": "Second", "context": "quota"}),
+                content_type="application/json",
+                headers=auth,
+            )
+            self.assertEqual(blocked.status_code, 429)
+            self.assertEqual(blocked.get_json()["error"], "quota exceeded")
+            self.assertEqual(blocked.get_json()["tier"], "attestor")
+
+    def test_admin_can_promote_a_users_tier(self):
+        app_module.auth_registry.admin_users.add("tier-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "tier-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "promote-me"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            promoted = self.client.post(
+                "/admin/users/promote-me/tier",
+                data=json.dumps({"tier": "sovereign"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            self.assertEqual(promoted.status_code, 200)
+
+            quota = self.client.get(
+                "/me/quota", headers={"Authorization": f"Bearer {member}"}
+            ).get_json()
+            self.assertEqual(quota["tier"], "sovereign")
+            self.assertIsNone(quota["limit"])
+
+            # a member cannot promote anyone
+            forbidden = self.client.post(
+                "/admin/users/promote-me/tier",
+                data=json.dumps({"tier": "arbiter"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {member}"},
+            )
+            self.assertEqual(forbidden.status_code, 403)
+        finally:
+            app_module.auth_registry.admin_users.discard("tier-steward")
 
     def test_admin_role_gates_stewardship_views(self):
         app_module.auth_registry.admin_users.add("steward")
