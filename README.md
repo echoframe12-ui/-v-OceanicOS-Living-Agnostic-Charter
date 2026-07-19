@@ -128,6 +128,8 @@ Use the endpoints:
 - GET /me/attestations
 - GET /me/memory
 - GET /me/cvi
+- GET /admin/overview
+- GET /admin/users
 - POST /agent/run
 - GET /agent/events
 - POST /state
@@ -249,6 +251,13 @@ Your data is addressable as yours (see [DECISIONS/0003](DECISIONS/0003-per-user-
 ```bash
 curl http://127.0.0.1:5000/me/builds -H 'Authorization: Bearer <token>'   # only your builds
 curl http://127.0.0.1:5000/me/cvi -H 'Authorization: Bearer <token>'      # your verification index
+```
+
+Stewardship is a role, not a free-for-all (see [DECISIONS/0004](DECISIONS/0004-admin-stewardship-role.md)): admins are appointed out-of-band with `OCEANICOS_ADMIN_USERS` (comma-separated usernames) and get aggregate cross-actor views (`/admin/overview`, `/admin/users`) — platform health and per-actor build counts, not the content of members' private slices. Non-admins get 403. Members can't promote themselves.
+
+```bash
+OCEANICOS_ADMIN_USERS=root python app.py
+# register "root" -> role: admin; /admin/overview then returns 200 for root's token, 403 for everyone else
 ```
 
 ## Brand

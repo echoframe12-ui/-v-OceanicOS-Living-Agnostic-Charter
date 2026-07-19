@@ -267,6 +267,50 @@ class OceanicOSAppTests(unittest.TestCase):
         builds = self.client.get("/builds").get_json()
         self.assertTrue(any(b["actor"] == "builder-user" for b in builds))
 
+    def test_admin_role_gates_stewardship_views(self):
+        app_module.auth_registry.admin_users.add("steward")
+        try:
+            admin_token = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member_token = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "plain-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            whoami = self.client.get(
+                "/auth/whoami", headers={"Authorization": f"Bearer {admin_token}"}
+            ).get_json()
+            self.assertEqual(whoami["role"], "admin")
+
+            # member is forbidden from the stewardship surface
+            forbidden = self.client.get(
+                "/admin/overview", headers={"Authorization": f"Bearer {member_token}"}
+            )
+            self.assertEqual(forbidden.status_code, 403)
+            anon = self.client.get("/admin/overview")
+            self.assertEqual(anon.status_code, 403)
+
+            # admin sees across actors
+            overview = self.client.get(
+                "/admin/overview", headers={"Authorization": f"Bearer {admin_token}"}
+            )
+            self.assertEqual(overview.status_code, 200)
+            self.assertIn("users", overview.get_json())
+            self.assertIn("actors", overview.get_json())
+
+            users = self.client.get(
+                "/admin/users", headers={"Authorization": f"Bearer {admin_token}"}
+            ).get_json()
+            steward_row = next(u for u in users if u["username"] == "steward")
+            self.assertEqual(steward_row["role"], "admin")
+            self.assertIn("builds", steward_row)
+        finally:
+            app_module.auth_registry.admin_users.discard("steward")
+
     def test_me_views_scope_to_the_authenticated_actor(self):
         def register(name):
             return self.client.post(

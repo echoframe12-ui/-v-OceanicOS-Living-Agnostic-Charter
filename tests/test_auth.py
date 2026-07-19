@@ -56,6 +56,27 @@ class AuthRegistryTests(unittest.TestCase):
         self.assertNotIn("token", users[0])
         self.assertNotIn("token_hash", users[0])
 
+    def test_admin_users_get_the_admin_role(self):
+        auth = AuthRegistry(self.db_path, admin_users=["root"])
+        root = auth.register("root")
+        joe = auth.register("joe")
+        self.assertEqual(root["role"], "admin")
+        self.assertEqual(joe["role"], "member")
+        # authenticate reflects the stored role
+        self.assertEqual(auth.authenticate(root["token"])["role"], "admin")
+        self.assertEqual(auth.authenticate(joe["token"])["role"], "member")
+
+    def test_list_users_role_is_opt_in(self):
+        auth = AuthRegistry(self.db_path, admin_users=["root"])
+        auth.register("root")
+        auth.register("joe")
+        without_role = auth.list_users()
+        self.assertNotIn("role", without_role[0])
+        with_role = auth.list_users(include_role=True)
+        roles = {u["username"]: u["role"] for u in with_role}
+        self.assertEqual(roles["root"], "admin")
+        self.assertEqual(roles["joe"], "member")
+
 
 if __name__ == "__main__":
     unittest.main()
