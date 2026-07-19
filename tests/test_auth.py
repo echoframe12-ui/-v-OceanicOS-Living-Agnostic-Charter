@@ -56,6 +56,19 @@ class AuthRegistryTests(unittest.TestCase):
         self.assertNotIn("token", users[0])
         self.assertNotIn("token_hash", users[0])
 
+    def test_new_users_default_to_attestor_tier(self):
+        self.assertEqual(self.auth.register("frank")["tier"], "attestor")
+        self.assertEqual(self.auth.authenticate(self.auth.register("gina")["token"])["tier"], "attestor")
+
+    def test_set_tier_updates_and_validates(self):
+        token = self.auth.register("hana")["token"]
+        self.auth.set_tier("hana", "arbiter")
+        self.assertEqual(self.auth.authenticate(token)["tier"], "arbiter")
+        with self.assertRaises(ValueError):
+            self.auth.set_tier("hana", "platinum")
+        with self.assertRaises(KeyError):
+            self.auth.set_tier("nobody", "arbiter")
+
     def test_admin_users_get_the_admin_role(self):
         auth = AuthRegistry(self.db_path, admin_users=["root"])
         root = auth.register("root")

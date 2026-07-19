@@ -18,6 +18,7 @@ from models import ModelAdapter, ModelRouter
 from nodes import NodeRegistry
 from planner import Planner
 from plugins import PluginRegistry
+import quotas
 from review import ReviewEngine
 from server import OceanicOSService
 from state import StateSnapshot
@@ -82,7 +83,7 @@ def _current_user() -> dict:
     token = header[7:] if header.startswith("Bearer ") else None
     user = auth_registry.authenticate(token)
     if user is None:
-        return {"username": ANONYMOUS, "role": "anonymous"}
+        return {"username": ANONYMOUS, "role": "anonymous", "tier": quotas.DEFAULT_TIER}
     return user
 
 
@@ -102,6 +103,7 @@ def require_auth(view):
         user = _current_user()
         g.actor = user["username"]
         g.role = user["role"]
+        g.tier = user["tier"]
         if app.config.get("REQUIRE_AUTH") and g.actor == ANONYMOUS:
             return jsonify({"error": "unauthorized"}), 401
         return view(*args, **kwargs)
@@ -121,6 +123,7 @@ def require_admin(view):
         user = _current_user()
         g.actor = user["username"]
         g.role = user["role"]
+        g.tier = user["tier"]
         if g.role != "admin":
             return jsonify({"error": "admin role required"}), 403
         return view(*args, **kwargs)
@@ -440,6 +443,23 @@ def run_builder():
     task = payload.get("task", "Draft a charter update")
     context = payload.get("context", "Open orchestration")
 
+    # Named actors are metered against their tier; the open anonymous path is not.
+    if g.actor != ANONYMOUS:
+        used = len(service.list_builds(actor=g.actor))
+        status = quotas.quota_status(g.tier, used)
+        if status["exceeded"]:
+            return (
+                jsonify(
+                    {
+                        "error": "quota exceeded",
+                        "tier": status["tier"],
+                        "limit": status["limit"],
+                        "used": status["used"],
+                    }
+                ),
+                429,
+            )
+
     result = builder.run(task, context, actor=g.actor)
     result["dashboard"] = dashboard.summary()
     return jsonify(result)
@@ -466,12 +486,22 @@ def auth_register():
 @app.route("/auth/whoami", methods=["GET"])
 def auth_whoami():
     user = _current_user()
-    return jsonify({"actor": user["username"], "role": user["role"]})
+    return jsonify(
+        {"actor": user["username"], "role": user["role"], "tier": user["tier"]}
+    )
 
 
 @app.route("/auth/users", methods=["GET"])
 def auth_users():
     return jsonify(auth_registry.list_users())
+
+
+@app.route("/admin/users/<username>/tier", methods=["POST"])
+@require_admin
+def admin_set_tier(username: str):
+    payload = request.get_json(silent=True) or {}
+    tier = payload.get("tier", "")
+    return jsonify(auth_registry.set_tier(username, tier))
 
 
 @app.route("/admin/users", methods=["GET"])
@@ -527,6 +557,13 @@ def my_memory():
 @require_auth
 def my_cvi():
     return jsonify(attestation_engine.cvi(actor=g.actor))
+
+
+@app.route("/me/quota", methods=["GET"])
+@require_auth
+def my_quota():
+    used = len(service.list_builds(actor=g.actor))
+    return jsonify(quotas.quota_status(g.tier, used))
 
 
 @app.route("/plugins", methods=["POST"])
