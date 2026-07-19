@@ -74,6 +74,24 @@ class OceanicOSServiceTests(unittest.TestCase):
         self.assertEqual(builds[0]["task"], "Build the charter platform")
         self.assertEqual(builds[0]["stages"], ["plan", "workflow"])
 
+    def test_memory_is_scoped_by_actor(self):
+        self.service.store_memory({"text": "alice note about reviews"}, actor="alice")
+        self.service.store_memory({"text": "bob note about reviews"}, actor="bob")
+
+        all_hits = self.service.search_memory("reviews")
+        self.assertEqual(len(all_hits), 2)
+
+        alice_hits = self.service.search_memory("reviews", actor="alice")
+        self.assertEqual(len(alice_hits), 1)
+        self.assertIn("alice", alice_hits[0]["text"])
+
+    def test_builds_are_scoped_by_actor(self):
+        self.service.record_build("t1", "c", "a1", ["plan"], actor="alice")
+        self.service.record_build("t2", "c", "a2", ["plan"], actor="bob")
+        self.assertEqual(len(self.service.list_builds()), 2)
+        self.assertEqual(len(self.service.list_builds(actor="alice")), 1)
+        self.assertEqual(self.service.list_builds(actor="alice")[0]["task"], "t1")
+
     def test_builds_persist_across_service_instances(self):
         self.service.record_build("First build", "testing", "first-build", ["plan"])
         reopened = OceanicOSService(self.temp_db.name)

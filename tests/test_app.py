@@ -267,6 +267,93 @@ class OceanicOSAppTests(unittest.TestCase):
         builds = self.client.get("/builds").get_json()
         self.assertTrue(any(b["actor"] == "builder-user" for b in builds))
 
+    def test_admin_role_gates_stewardship_views(self):
+        app_module.auth_registry.admin_users.add("steward")
+        try:
+            admin_token = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member_token = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "plain-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            whoami = self.client.get(
+                "/auth/whoami", headers={"Authorization": f"Bearer {admin_token}"}
+            ).get_json()
+            self.assertEqual(whoami["role"], "admin")
+
+            # member is forbidden from the stewardship surface
+            forbidden = self.client.get(
+                "/admin/overview", headers={"Authorization": f"Bearer {member_token}"}
+            )
+            self.assertEqual(forbidden.status_code, 403)
+            anon = self.client.get("/admin/overview")
+            self.assertEqual(anon.status_code, 403)
+
+            # admin sees across actors
+            overview = self.client.get(
+                "/admin/overview", headers={"Authorization": f"Bearer {admin_token}"}
+            )
+            self.assertEqual(overview.status_code, 200)
+            self.assertIn("users", overview.get_json())
+            self.assertIn("actors", overview.get_json())
+
+            users = self.client.get(
+                "/admin/users", headers={"Authorization": f"Bearer {admin_token}"}
+            ).get_json()
+            steward_row = next(u for u in users if u["username"] == "steward")
+            self.assertEqual(steward_row["role"], "admin")
+            self.assertIn("builds", steward_row)
+        finally:
+            app_module.auth_registry.admin_users.discard("steward")
+
+    def test_me_views_scope_to_the_authenticated_actor(self):
+        def register(name):
+            return self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": name}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+        def run_build(token, task):
+            return self.client.post(
+                "/builder/run",
+                data=json.dumps({"task": task, "context": "scoping"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        alice = register("scope-alice")
+        bob = register("scope-bob")
+        run_build(alice, "Alice scoped build")
+        run_build(bob, "Bob scoped build")
+
+        alice_builds = self.client.get(
+            "/me/builds", headers={"Authorization": f"Bearer {alice}"}
+        ).get_json()
+        self.assertTrue(alice_builds)
+        self.assertTrue(all(b["actor"] == "scope-alice" for b in alice_builds))
+        self.assertFalse(any(b["actor"] == "scope-bob" for b in alice_builds))
+
+        alice_att = self.client.get(
+            "/me/attestations", headers={"Authorization": f"Bearer {alice}"}
+        ).get_json()
+        self.assertTrue(all(a["actor"] == "scope-alice" for a in alice_att))
+
+        alice_mem = self.client.get(
+            "/me/memory?query=build", headers={"Authorization": f"Bearer {alice}"}
+        ).get_json()
+        self.assertTrue(alice_mem)
+
+        alice_cvi = self.client.get(
+            "/me/cvi", headers={"Authorization": f"Bearer {alice}"}
+        ).get_json()
+        self.assertGreaterEqual(alice_cvi["samples"], 1)
+
     def test_enforcement_mode_gates_protected_endpoints(self):
         app_module.app.config["REQUIRE_AUTH"] = True
         try:

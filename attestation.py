@@ -38,10 +38,12 @@ class AttestationEngine:
         content: str,
         sources: list[str],
         confidence: float,
+        actor: str = "anonymous",
     ) -> dict[str, Any]:
         entry = {
             "id": len(self._attestations) + 1,
             "subject": subject,
+            "actor": actor,
             "sha256": hashlib.sha256(content.encode()).hexdigest(),
             "confidence": confidence,
             "threshold": CONFIDENCE_THRESHOLD,
@@ -52,23 +54,26 @@ class AttestationEngine:
         self._attestations.append(entry)
         return entry
 
-    def list(self) -> list[dict[str, Any]]:
-        return list(self._attestations)
+    def list(self, actor: str | None = None) -> list[dict[str, Any]]:
+        if actor is None:
+            return list(self._attestations)
+        return [entry for entry in self._attestations if entry["actor"] == actor]
 
     def held(self) -> list[dict[str, Any]]:
         return [entry for entry in self._attestations if entry["status"] == "held"]
 
-    def cvi(self) -> dict[str, Any]:
+    def cvi(self, actor: str | None = None) -> dict[str, Any]:
         """Composite Verification Index — evidence-weighted trust, 0.0 to 1.0.
 
-        Mean attestation confidence discounted by the held ratio. An empty
-        record scores 0.0: no evidence, no trust.
+        Mean attestation confidence discounted by the held ratio. Scoped to an
+        actor when given. An empty record scores 0.0: no evidence, no trust.
         """
-        total = len(self._attestations)
+        scope = self.list(actor)
+        total = len(scope)
         if total == 0:
             return {"cvi": 0.0, "samples": 0, "mean_confidence": 0.0, "held_ratio": 0.0}
-        mean_confidence = sum(a["confidence"] for a in self._attestations) / total
-        held_ratio = len(self.held()) / total
+        mean_confidence = sum(a["confidence"] for a in scope) / total
+        held_ratio = len([a for a in scope if a["status"] == "held"]) / total
         return {
             "cvi": round(mean_confidence * (1 - held_ratio), 3),
             "samples": total,

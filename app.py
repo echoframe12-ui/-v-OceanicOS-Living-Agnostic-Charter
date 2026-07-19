@@ -50,6 +50,7 @@ attestation_engine = AttestationEngine()
 node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
+app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
     service=service,
     planner=planner,
@@ -76,25 +77,52 @@ def handle_bad_request(error):
     return jsonify({"error": str(error)}), 400
 
 
-def _current_actor() -> str:
+def _current_user() -> dict:
     header = request.headers.get("Authorization", "")
     token = header[7:] if header.startswith("Bearer ") else None
     user = auth_registry.authenticate(token)
-    return user["username"] if user else ANONYMOUS
+    if user is None:
+        return {"username": ANONYMOUS, "role": "anonymous"}
+    return user
+
+
+def _current_actor() -> str:
+    return _current_user()["username"]
 
 
 def require_auth(view):
     """Attribute every request to an actor; enforce a token when locked.
 
-    Attribution is always on (g.actor). Enforcement (401 without a valid
-    token) applies only when app.config['REQUIRE_AUTH'] is set.
+    Attribution is always on (g.actor / g.role). Enforcement (401 without a
+    valid token) applies only when app.config['REQUIRE_AUTH'] is set.
     """
 
     @wraps(view)
     def wrapped(*args, **kwargs):
-        g.actor = _current_actor()
+        user = _current_user()
+        g.actor = user["username"]
+        g.role = user["role"]
         if app.config.get("REQUIRE_AUTH") and g.actor == ANONYMOUS:
             return jsonify({"error": "unauthorized"}), 401
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def require_admin(view):
+    """Stewardship gate: cross-actor views require an admin token.
+
+    Members stay scoped to their own slice; only an accountable steward
+    sees across actors — transparency for governance, not surveillance.
+    """
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        user = _current_user()
+        g.actor = user["username"]
+        g.role = user["role"]
+        if g.role != "admin":
+            return jsonify({"error": "admin role required"}), 403
         return view(*args, **kwargs)
 
     return wrapped
@@ -121,13 +149,14 @@ def create_plan():
 @require_auth
 def store_memory():
     payload = request.get_json(silent=True) or {}
-    return jsonify(service.store_memory(payload))
+    return jsonify(service.store_memory(payload, actor=g.actor))
 
 
 @app.route("/memory", methods=["GET"])
 def search_memory():
     query = request.args.get("query", "")
-    return jsonify(service.search_memory(query))
+    actor = request.args.get("actor")
+    return jsonify(service.search_memory(query, actor=actor))
 
 
 @app.route("/tools", methods=["GET"])
@@ -180,7 +209,8 @@ def list_models():
 
 @app.route("/builds", methods=["GET"])
 def list_builds():
-    return jsonify(service.list_builds())
+    actor = request.args.get("actor")
+    return jsonify(service.list_builds(actor=actor))
 
 
 @app.route("/models/route", methods=["POST"])
@@ -200,7 +230,8 @@ def model_consensus():
 
 @app.route("/attestations", methods=["GET"])
 def list_attestations():
-    return jsonify(attestation_engine.list())
+    actor = request.args.get("actor")
+    return jsonify(attestation_engine.list(actor=actor))
 
 
 @app.route("/builds/export", methods=["GET"])
@@ -434,12 +465,68 @@ def auth_register():
 
 @app.route("/auth/whoami", methods=["GET"])
 def auth_whoami():
-    return jsonify({"actor": _current_actor()})
+    user = _current_user()
+    return jsonify({"actor": user["username"], "role": user["role"]})
 
 
 @app.route("/auth/users", methods=["GET"])
 def auth_users():
     return jsonify(auth_registry.list_users())
+
+
+@app.route("/admin/users", methods=["GET"])
+@require_admin
+def admin_users():
+    users = auth_registry.list_users(include_role=True)
+    builds = service.list_builds()
+    counts: dict[str, int] = {}
+    for build in builds:
+        counts[build["actor"]] = counts.get(build["actor"], 0) + 1
+    for user in users:
+        user["builds"] = counts.get(user["username"], 0)
+    return jsonify(users)
+
+
+@app.route("/admin/overview", methods=["GET"])
+@require_admin
+def admin_overview():
+    builds = service.list_builds()
+    attestations = attestation_engine.list()
+    return jsonify(
+        {
+            "users": len(auth_registry.list_users()),
+            "builds": len(builds),
+            "attestations": len(attestations),
+            "held": len(attestation_engine.held()),
+            "cvi": attestation_engine.cvi()["cvi"],
+            "actors": sorted({build["actor"] for build in builds}),
+        }
+    )
+
+
+@app.route("/me/builds", methods=["GET"])
+@require_auth
+def my_builds():
+    return jsonify(service.list_builds(actor=g.actor))
+
+
+@app.route("/me/attestations", methods=["GET"])
+@require_auth
+def my_attestations():
+    return jsonify(attestation_engine.list(actor=g.actor))
+
+
+@app.route("/me/memory", methods=["GET"])
+@require_auth
+def my_memory():
+    query = request.args.get("query", "")
+    return jsonify(service.search_memory(query, actor=g.actor))
+
+
+@app.route("/me/cvi", methods=["GET"])
+@require_auth
+def my_cvi():
+    return jsonify(attestation_engine.cvi(actor=g.actor))
 
 
 @app.route("/plugins", methods=["POST"])

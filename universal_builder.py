@@ -134,6 +134,7 @@ class UniversalBuilder:
             build_content,
             sources=stages + [f"workspace:{build_file['path']}", f"actor:{actor}"],
             confidence=confidence,
+            actor=actor,
         )
         if attestation["status"] == "attested":
             review = self.review_engine.approve(proposal)
@@ -144,7 +145,8 @@ class UniversalBuilder:
                 "text": f"Build run {run_id}: {task}",
                 "source": "universal-builder",
                 "context": context or "general",
-            }
+            },
+            actor=actor,
         )
         self.state_snapshot.record("builder_run_complete", task)
         stages.append("memory")
