@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 CONFIDENCE_THRESHOLD = 0.74
@@ -55,10 +59,32 @@ class AttestationEngine:
     Every attestation carries a content hash, a confidence score judged
     against the threshold, and the source trail that produced it. Anything
     below threshold is held, not passed.
+
+    Attestations are persisted in the OceanicOS SQLite database, so the record
+    — and the CVI computed from it — is shared across gunicorn workers and
+    survives restarts. Without this, each worker held its own in-memory record
+    and reported a different CVI; the ground truth of what was verified now
+    lives in one place.
     """
 
-    def __init__(self) -> None:
-        self._attestations: list[dict[str, Any]] = []
+    def __init__(self, db_path: str | None = None) -> None:
+        self._db_path = Path(db_path or os.getenv("OCEANICOS_DB", "oceanicos.db"))
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS attestations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject TEXT NOT NULL,
+                    actor TEXT NOT NULL DEFAULT 'anonymous',
+                    sha256 TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    threshold REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    sources TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
 
     def attest(
         self,
@@ -68,27 +94,68 @@ class AttestationEngine:
         confidence: float,
         actor: str = "anonymous",
     ) -> dict[str, Any]:
-        entry = {
-            "id": len(self._attestations) + 1,
+        status = "attested" if confidence >= CONFIDENCE_THRESHOLD else "held"
+        created_at = datetime.now(timezone.utc).isoformat()
+        sha256 = hashlib.sha256(content.encode()).hexdigest()
+        with sqlite3.connect(self._db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO attestations
+                    (subject, actor, sha256, confidence, threshold, status, sources, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    subject,
+                    actor,
+                    sha256,
+                    confidence,
+                    CONFIDENCE_THRESHOLD,
+                    status,
+                    json.dumps(list(sources)),
+                    created_at,
+                ),
+            )
+        return {
+            "id": cursor.lastrowid,
             "subject": subject,
             "actor": actor,
-            "sha256": hashlib.sha256(content.encode()).hexdigest(),
+            "sha256": sha256,
             "confidence": confidence,
             "threshold": CONFIDENCE_THRESHOLD,
-            "status": "attested" if confidence >= CONFIDENCE_THRESHOLD else "held",
+            "status": status,
             "sources": list(sources),
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at,
         }
-        self._attestations.append(entry)
-        return entry
+
+    def _rows(self, where: str = "", params: tuple = ()) -> list[dict[str, Any]]:
+        query = (
+            "SELECT id, subject, actor, sha256, confidence, threshold, status, "
+            "sources, created_at FROM attestations "
+        ) + where + " ORDER BY id"
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": row[0],
+                "subject": row[1],
+                "actor": row[2],
+                "sha256": row[3],
+                "confidence": row[4],
+                "threshold": row[5],
+                "status": row[6],
+                "sources": json.loads(row[7]),
+                "created_at": row[8],
+            }
+            for row in rows
+        ]
 
     def list(self, actor: str | None = None) -> list[dict[str, Any]]:
         if actor is None:
-            return list(self._attestations)
-        return [entry for entry in self._attestations if entry["actor"] == actor]
+            return self._rows()
+        return self._rows("WHERE actor = ?", (actor,))
 
     def held(self) -> list[dict[str, Any]]:
-        return [entry for entry in self._attestations if entry["status"] == "held"]
+        return self._rows("WHERE status = ?", ("held",))
 
     def cvi(self, actor: str | None = None) -> dict[str, Any]:
         """Composite Verification Index — evidence-weighted trust, 0.0 to 1.0.

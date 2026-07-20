@@ -1,4 +1,6 @@
 import hashlib
+import os
+import tempfile
 import unittest
 
 from attestation import (
@@ -59,8 +61,17 @@ class ScoreConfidenceTests(unittest.TestCase):
 
 
 class AttestationEngineTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
     def test_attest_hashes_content(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         entry = engine.attest("build-1", "the content", ["plan"], 0.9)
         self.assertEqual(
             entry["sha256"], hashlib.sha256(b"the content").hexdigest()
@@ -69,19 +80,19 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(entry["threshold"], CONFIDENCE_THRESHOLD)
 
     def test_below_threshold_is_held(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         entry = engine.attest("build-1", "content", ["plan"], 0.7)
         self.assertEqual(entry["status"], "held")
         self.assertEqual(len(engine.held()), 1)
 
     def test_cvi_with_no_evidence_is_zero(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         report = engine.cvi()
         self.assertEqual(report["cvi"], 0.0)
         self.assertEqual(report["samples"], 0)
 
     def test_attestations_are_scoped_by_actor(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9, actor="alice")
         engine.attest("b", "two", [], 0.9, actor="bob")
         self.assertEqual(len(engine.list()), 2)
@@ -89,14 +100,14 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(engine.list(actor="alice")[0]["actor"], "alice")
 
     def test_cvi_scopes_to_actor(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9, actor="alice")
         engine.attest("b", "two", [], 0.5, actor="bob")  # held
         self.assertEqual(engine.cvi(actor="alice")["cvi"], 0.9)
         self.assertEqual(engine.cvi(actor="bob")["held_ratio"], 1.0)
 
     def test_cvi_discounts_held_attestations(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9)
         engine.attest("b", "two", [], 0.7)  # held
         report = engine.cvi()
@@ -106,12 +117,27 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(report["cvi"], 0.4)
 
     def test_list_preserves_order_and_ids(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9)
         engine.attest("b", "two", [], 0.5)
         entries = engine.list()
         self.assertEqual([entry["id"] for entry in entries], [1, 2])
         self.assertEqual(len(engine.held()), 1)
+
+    def test_record_is_shared_across_instances(self):
+        # Two engines on one database stand in for two gunicorn workers: an
+        # attestation written by one is visible — and folded into the CVI — by
+        # the other. This is the whole point of persisting the record.
+        worker_a = AttestationEngine(self.db_path)
+        worker_b = AttestationEngine(self.db_path)
+        worker_a.attest("shared", "content", ["plan"], 0.9, actor="alice")
+        self.assertEqual(len(worker_b.list()), 1)
+        self.assertEqual(worker_b.cvi(actor="alice")["samples"], 1)
+
+    def test_sources_survive_the_round_trip(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", ["plan", "consensus:approve"], 0.9)
+        self.assertEqual(engine.list()[0]["sources"], ["plan", "consensus:approve"])
 
 
 if __name__ == "__main__":

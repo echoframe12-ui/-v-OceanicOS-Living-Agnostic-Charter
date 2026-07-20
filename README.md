@@ -205,7 +205,7 @@ make stack          # test -> docker build (the whole stack)
 make docker-run     # run the container
 ```
 
-> **Worker note:** SQLite-backed state — builds ledger, auth/users, usage audit, memory, calendar, ground-truth cache — is shared across gunicorn workers. In-memory state — the attestation engine (and therefore `/cvi`), node mounts, and the model router — currently lives per process, so run with `--workers 1` for a consistent CVI across requests, or scale out only the SQLite-backed surface. Persisting attestations to SQLite is the natural next step for multi-worker CVI.
+> **Worker note:** SQLite-backed state — builds ledger, auth/users, usage audit, memory, calendar, ground-truth cache, and the attestation record (and therefore `/cvi`) — is shared across gunicorn workers, so the CVI reads the same from every worker (see [DECISIONS/0010](DECISIONS/0010-persistent-attestation-record.md)). What remains per process is request-derived and holds no verification ground truth: node mounts and the model-router registry. Multi-worker deployment needs no special flags.
 
 ## Real Model Provider
 
