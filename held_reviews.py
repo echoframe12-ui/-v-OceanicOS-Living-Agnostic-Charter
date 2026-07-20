@@ -21,6 +21,39 @@ UPHOLD = "uphold"
 VERDICTS = (RELEASE, UPHOLD)
 
 
+def sla_status(
+    held_created_at: str,
+    latest_review: dict[str, Any] | None,
+    sla_seconds: int,
+    now: "datetime | None" = None,
+) -> dict[str, Any]:
+    """Age a held attestation against the review SLA.
+
+    The SLA measures time to a *decision*, not time to release: a held item is
+    `pending` until it is reviewed, then `decided` (whether released or upheld).
+    A pending item breaches once its age exceeds the SLA; a decided item is
+    within SLA when the decision landed inside the window. `sla_seconds <= 0`
+    disables the SLA — nothing ever breaches. `now` is injectable for testing.
+    """
+    now = now or datetime.now(timezone.utc)
+    held_at = datetime.fromisoformat(held_created_at)
+    if latest_review is None:
+        age = (now - held_at).total_seconds()
+        return {
+            "state": "pending",
+            "age_seconds": round(age, 3),
+            "sla_breached": sla_seconds > 0 and age > sla_seconds,
+        }
+    decided_at = datetime.fromisoformat(latest_review["created_at"])
+    took = (decided_at - held_at).total_seconds()
+    return {
+        "state": "decided",
+        "verdict": latest_review["verdict"],
+        "decision_seconds": round(took, 3),
+        "within_sla": sla_seconds <= 0 or took <= sla_seconds,
+    }
+
+
 class HeldReviewLog:
     """Persistent, append-only reviews of held attestations."""
 

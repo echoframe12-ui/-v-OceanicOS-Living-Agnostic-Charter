@@ -1,8 +1,9 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 
-from held_reviews import RELEASE, UPHOLD, HeldReviewLog
+from held_reviews import RELEASE, UPHOLD, HeldReviewLog, sla_status
 
 
 class HeldReviewLogTests(unittest.TestCase):
@@ -40,6 +41,42 @@ class HeldReviewLogTests(unittest.TestCase):
         # single release
         self.log.record(3, "s", RELEASE, "clean")
         self.assertEqual(self.log.released_ids(), {1, 3})
+
+
+class SlaStatusTests(unittest.TestCase):
+    def setUp(self):
+        self.held_at = datetime(2019, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+        self.held_iso = self.held_at.isoformat()
+
+    def test_pending_within_sla_is_not_breached(self):
+        now = self.held_at + timedelta(seconds=100)
+        status = sla_status(self.held_iso, None, sla_seconds=3600, now=now)
+        self.assertEqual(status["state"], "pending")
+        self.assertEqual(status["age_seconds"], 100)
+        self.assertFalse(status["sla_breached"])
+
+    def test_pending_past_sla_is_breached(self):
+        now = self.held_at + timedelta(seconds=7200)
+        status = sla_status(self.held_iso, None, sla_seconds=3600, now=now)
+        self.assertTrue(status["sla_breached"])
+
+    def test_sla_of_zero_never_breaches(self):
+        now = self.held_at + timedelta(days=365)
+        status = sla_status(self.held_iso, None, sla_seconds=0, now=now)
+        self.assertFalse(status["sla_breached"])
+
+    def test_decided_within_sla(self):
+        review = {"verdict": RELEASE, "created_at": (self.held_at + timedelta(seconds=600)).isoformat()}
+        status = sla_status(self.held_iso, review, sla_seconds=3600)
+        self.assertEqual(status["state"], "decided")
+        self.assertEqual(status["verdict"], RELEASE)
+        self.assertEqual(status["decision_seconds"], 600)
+        self.assertTrue(status["within_sla"])
+
+    def test_decided_past_sla_is_not_within(self):
+        review = {"verdict": UPHOLD, "created_at": (self.held_at + timedelta(seconds=9000)).isoformat()}
+        status = sla_status(self.held_iso, review, sla_seconds=3600)
+        self.assertFalse(status["within_sla"])
 
 
 if __name__ == "__main__":

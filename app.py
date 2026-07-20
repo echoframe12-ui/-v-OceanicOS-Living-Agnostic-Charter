@@ -24,7 +24,7 @@ from nodes import NodeRegistry
 from planner import Planner
 from plugins import PluginRegistry
 import quotas
-from held_reviews import HeldReviewLog, VERDICTS
+from held_reviews import HeldReviewLog, VERDICTS, sla_status
 from rules import RulesAdapter, RulesEngine
 from usage import UsageLog
 from review import ReviewEngine
@@ -80,6 +80,8 @@ node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
 usage_log = UsageLog(str(service.db_path))
 held_review_log = HeldReviewLog(str(service.db_path))
+# Time-to-decision SLA for held attestations (seconds). 0 disables breach flags.
+HELD_SLA_SECONDS = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
@@ -309,16 +311,18 @@ def list_held_attestations():
     resolutions. Stewardship view: admin only.
     """
     released = held_review_log.released_ids()
-    return jsonify(
-        [
+    items = []
+    for att in attestation_engine.held():
+        latest = held_review_log.latest_for(att["id"])
+        items.append(
             {
                 **att,
                 "review_status": _review_status(att["id"], released),
-                "latest_review": held_review_log.latest_for(att["id"]),
+                "latest_review": latest,
+                "sla": sla_status(att["created_at"], latest, HELD_SLA_SECONDS),
             }
-            for att in attestation_engine.held()
-        ]
-    )
+        )
+    return jsonify(items)
 
 
 @app.route("/attestations/<int:att_id>/review", methods=["POST"])
@@ -727,6 +731,13 @@ def admin_overview():
     held = attestation_engine.held()
     released = held_review_log.released_ids()
     held_pending = len([att for att in held if att["id"] not in released])
+    held_sla_breached = sum(
+        1
+        for att in held
+        if sla_status(
+            att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS
+        ).get("sla_breached")
+    )
     return jsonify(
         {
             "users": len(auth_registry.list_users()),
@@ -734,6 +745,8 @@ def admin_overview():
             "attestations": len(attestations),
             "held": len(held),
             "held_pending": held_pending,
+            "held_sla_breached": held_sla_breached,
+            "held_sla_seconds": HELD_SLA_SECONDS,
             "cvi": attestation_engine.cvi(released_ids=released)["cvi"],
             "chain": attestation_engine.verify(),
             "checkpoint_policy": attestation_engine.checkpoint_policy,

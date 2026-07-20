@@ -312,6 +312,31 @@ class OceanicOSAppTests(unittest.TestCase):
         finally:
             app_module.auth_registry.admin_users.discard("held-steward")
 
+    def test_held_queue_and_overview_carry_sla_aging(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("sla-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "sla-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            auth = {"Authorization": f"Bearer {admin}"}
+            held = engine.attest("sla-subject", "content", [], 0.5)
+            self.assertEqual(held["status"], "held")
+
+            queue = self.client.get("/attestations/held", headers=auth).get_json()
+            entry = next(a for a in queue if a["id"] == held["id"])
+            self.assertEqual(entry["sla"]["state"], "pending")
+            self.assertIn("age_seconds", entry["sla"])
+            self.assertIn("sla_breached", entry["sla"])
+
+            overview = self.client.get("/admin/overview", headers=auth).get_json()
+            self.assertIn("held_sla_breached", overview)
+            self.assertIn("held_sla_seconds", overview)
+        finally:
+            app_module.auth_registry.admin_users.discard("sla-steward")
+
     def test_reviewing_a_non_held_attestation_conflicts(self):
         engine = app_module.attestation_engine
         app_module.auth_registry.admin_users.add("conflict-steward")
