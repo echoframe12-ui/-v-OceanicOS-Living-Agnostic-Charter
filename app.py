@@ -12,6 +12,7 @@ from flask import Flask, Response, g, jsonify, render_template, request
 import anchor
 import identity
 import metrics
+import openapi
 from agent import AgentLoop
 from cvi_history import CviHistory
 from artifacts import ArtifactRegistry
@@ -216,6 +217,21 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify(service.health())
+
+
+@app.route("/openapi.json", methods=["GET"])
+def openapi_spec():
+    """The API describes itself — OpenAPI generated from the live route table."""
+    return jsonify(
+        openapi.generate(
+            app.url_map,
+            app.view_functions,
+            title="OceanicOS VaaS API",
+            version="1.0",
+            description="Verification-as-a-Service — attest, don't assert. "
+            "Spec generated from the live routes, always current.",
+        )
+    )
 
 
 @app.route("/plans", methods=["POST"])

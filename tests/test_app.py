@@ -231,6 +231,14 @@ class OceanicOSAppTests(unittest.TestCase):
             self.client.get("/attestations?min_confidence=high").status_code, 400
         )
 
+    def test_openapi_endpoint_describes_the_live_api(self):
+        resp = self.client.get("/openapi.json")
+        self.assertEqual(resp.status_code, 200)
+        spec = resp.get_json()
+        self.assertEqual(spec["openapi"], "3.0.3")
+        self.assertIn("/metrics", spec["paths"])
+        self.assertIn("/openapi.json", spec["paths"])  # it documents itself too
+
     def test_cvi_history_records_on_build_and_matches_cvi(self):
         before = len(self.client.get("/cvi/history").get_json())
         self.client.post(
