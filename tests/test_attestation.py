@@ -283,6 +283,54 @@ class SignedCheckpointTests(unittest.TestCase):
         self.assertEqual(checkpoints[-1]["length"], 2)
 
 
+class AutoCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_seals_automatically_once_the_cadence_is_reached(self):
+        engine = AttestationEngine(self.db_path, signing_key="k", checkpoint_every=2)
+        engine.attest("a", "one", [], 0.9)
+        self.assertEqual(len(engine.list_checkpoints()), 0)  # not yet
+        engine.attest("b", "two", [], 0.9)
+        self.assertEqual(len(engine.list_checkpoints()), 1)  # sealed at 2
+        self.assertTrue(engine.verify()["trustworthy"])
+
+    def test_keeps_sealing_on_each_cadence_boundary(self):
+        engine = AttestationEngine(self.db_path, signing_key="k", checkpoint_every=2)
+        for i in range(4):
+            engine.attest(f"s{i}", f"c{i}", [], 0.9)
+        checkpoints = engine.list_checkpoints()
+        self.assertEqual(len(checkpoints), 2)
+        self.assertEqual([cp["length"] for cp in checkpoints], [2, 4])
+
+    def test_disabled_by_default(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")  # every=0
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        self.assertEqual(len(engine.list_checkpoints()), 0)
+        self.assertFalse(engine.checkpoint_policy["auto"])
+
+    def test_no_auto_seal_without_a_key(self):
+        engine = AttestationEngine(self.db_path, signing_key="", checkpoint_every=2)
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        self.assertEqual(len(engine.list_checkpoints()), 0)
+        self.assertFalse(engine.checkpoint_policy["auto"])
+
+    def test_policy_reports_the_cadence(self):
+        engine = AttestationEngine(self.db_path, signing_key="k", checkpoint_every=5)
+        policy = engine.checkpoint_policy
+        self.assertTrue(policy["auto"])
+        self.assertEqual(policy["every"], 5)
+        self.assertTrue(policy["can_sign"])
+
+
 class ExportTests(unittest.TestCase):
     def setUp(self):
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")

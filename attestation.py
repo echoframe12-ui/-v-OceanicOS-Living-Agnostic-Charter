@@ -124,10 +124,24 @@ class AttestationEngine:
         "sources, created_at, prev_hash, entry_hash"
     )
 
-    def __init__(self, db_path: str | None = None, signing_key: str | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | None = None,
+        signing_key: str | None = None,
+        checkpoint_every: int | None = None,
+    ) -> None:
         self._db_path = Path(db_path or os.getenv("OCEANICOS_DB", "oceanicos.db"))
         self._signing_key = (
             signing_key if signing_key is not None else os.getenv("OCEANICOS_SIGNING_KEY", "")
+        )
+        # Auto-seal cadence: seal the head every N attestations. 0 (the default)
+        # means manual-only — a checkpoint is taken only when an admin asks. A
+        # seal nobody runs protects nothing, so a deployment that cares about the
+        # signed guarantee sets this so the head is sealed as the record grows.
+        self._checkpoint_every = (
+            checkpoint_every
+            if checkpoint_every is not None
+            else int(os.getenv("OCEANICOS_CHECKPOINT_EVERY", "0"))
         )
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
@@ -221,12 +235,33 @@ class AttestationEngine:
             conn.execute("COMMIT")
         finally:
             conn.close()
+        self._maybe_checkpoint()
         return {
             "id": row_id,
             **entry,
             "prev_hash": prev_hash,
             "entry_hash": entry_hash,
         }
+
+    def _maybe_checkpoint(self) -> None:
+        """Auto-seal the head once the cadence's worth of new entries has landed.
+
+        Runs after the attest's own transaction has committed and closed, so the
+        checkpoint's read of the chain sees the entry just written. No-op unless
+        a cadence and a signing key are both set. Best-effort: a failed auto-seal
+        (e.g. a transient lock) never fails the attestation it follows — the
+        record is the priority; the next attest will try again.
+        """
+        if self._checkpoint_every <= 0 or not self._signing_key:
+            return
+        cp = self.latest_checkpoint()
+        sealed_length = cp["length"] if cp else 0
+        current_length = len(self._rows())
+        if current_length - sealed_length >= self._checkpoint_every:
+            try:
+                self.checkpoint()
+            except RuntimeError:
+                pass
 
     def _rows(self, where: str = "", params: tuple = ()) -> list[dict[str, Any]]:
         query = (
@@ -272,6 +307,16 @@ class AttestationEngine:
     def can_sign(self) -> bool:
         """Whether a signing key is configured. No key, no signed checkpoints."""
         return bool(self._signing_key)
+
+    @property
+    def checkpoint_policy(self) -> dict[str, Any]:
+        """How the head gets sealed: manual-only, or auto every N attestations."""
+        auto = self._checkpoint_every > 0 and self.can_sign
+        return {
+            "can_sign": self.can_sign,
+            "auto": auto,
+            "every": self._checkpoint_every if auto else 0,
+        }
 
     def _sign(self, head_hash: str, length: int) -> str:
         return checkpoint_signature(self._signing_key, head_hash, length)

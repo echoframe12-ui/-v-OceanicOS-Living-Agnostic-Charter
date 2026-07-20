@@ -64,7 +64,9 @@ artifact_registry = ArtifactRegistry()
 dashboard = Dashboard()
 plugin_registry = PluginRegistry()
 attestation_engine = AttestationEngine(
-    str(service.db_path), signing_key=os.getenv("OCEANICOS_SIGNING_KEY", "")
+    str(service.db_path),
+    signing_key=os.getenv("OCEANICOS_SIGNING_KEY", ""),
+    checkpoint_every=int(os.getenv("OCEANICOS_CHECKPOINT_EVERY", "0")),
 )
 node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
@@ -626,6 +628,7 @@ def admin_overview():
             "held": len(attestation_engine.held()),
             "cvi": attestation_engine.cvi()["cvi"],
             "chain": attestation_engine.verify(),
+            "checkpoint_policy": attestation_engine.checkpoint_policy,
             "actors": sorted({build["actor"] for build in builds}),
             "usage": usage_log.summary()["by_action"],
         }
