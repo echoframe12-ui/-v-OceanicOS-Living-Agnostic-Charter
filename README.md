@@ -124,6 +124,7 @@ Use the endpoints:
 - GET /nodes
 - GET /pricing
 - GET /observer
+- GET /anchor
 - POST /auth/register
 - GET /auth/whoami
 - GET /auth/users
@@ -250,7 +251,9 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - `POST /attestations/checkpoint` (admin) seals the current chain head with an HMAC signature keyed by `OCEANICOS_SIGNING_KEY` — a secret that never touches the database. This raises the bar from tamper-*evident* to tamper-*resistant*: an attacker who rewrites the ledger and recomputes the chain forward still can't forge a checkpoint matching their new head without the key, so `verify` reports `trustworthy: false` (see [DECISIONS/0012](DECISIONS/0012-signed-checkpoints.md)). Returns 503 if no key is configured, 409 if the chain is already broken. Set `OCEANICOS_CHECKPOINT_EVERY=N` to seal the head automatically every N attestations so the signed guarantee operates without a human in the loop (default 0 = manual-only; `/admin/overview` reports the active `checkpoint_policy`; see [DECISIONS/0014](DECISIONS/0014-automatic-checkpoint-cadence.md)).
 - `GET /attestations/export` returns the whole sealed record — every attestation and checkpoint — as a self-contained JSON bundle. The standalone `verify_ledger.py` re-walks that bundle **offline**, with no service, database, or engine (`python verify_ledger.py --key <key> bundle.json`; exit 0 when intact and, with the key, trustworthy). Trust in the record becomes portable, not service-bound — the attestation ledger's answer to "the ground truth survives without the system" (see [DECISIONS/0013](DECISIONS/0013-portable-verifiable-export.md)).
 - `POST /models/consensus` convenes a 3-adapter dissent panel.
-- `GET /observer` reports the root process: stateless, sole read/write head, sigil checksum `0xΩ∞v`, and a real SHA-256 of the constitution.
+- `GET /observer` reports the root process: stateless, sole read/write head, sigil checksum `0xΩ∞v`, a real SHA-256 of the constitution, and the ratified manifest's hash plus whether the Anchor is present.
+- `GET /anchor` surfaces the **Anchor of Last Resort** (`boot/anchor_2019.txt`) — a fixed 2019 dataset (the Gregorian calendar of 2019) that answers offline with no service, database, or model in the loop; `?date=2019-07-04` looks a row up straight from the cache. It's the floor of graceful degradation: past the CSV, past the spreadsheet, one stale `.txt` that cannot fail (see [DECISIONS/0015](DECISIONS/0015-boot-manifest-and-anchor.md)).
+- The stack boots from a ratified, hash-attested manifest: `python oceanic_os.py --boot boot/init.v1 --state stateless --exit 0` (or `make boot`) instantiates the live components each manifest layer maps to and reports their real status — the threshold in force, the dissent panel's size, the checkpoint policy, the manifest hash, `anchor: present`. It always exits 0; the system continues.
 - The platform is offered commercially as Verification-as-a-Service — see [docs/VAAS.md](docs/VAAS.md) and `GET /pricing`.
 
 ## Identity and Multi-User Attribution

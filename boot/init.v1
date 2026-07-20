@@ -1,0 +1,33 @@
+{
+  "manifest": "OceanicOS Full-Stack Vibe Protocol",
+  "version": "1.0",
+  "status": "ratified",
+  "friction_coefficient": "optimal",
+  "frontend": {
+    "mode": "Attestation-Only",
+    "render_latency_ms": 2500,
+    "aesthetic": "Terminal_Nihilism",
+    "output": "Hash + Source_Trail, never answers"
+  },
+  "backend": {
+    "parallelism": 3,
+    "dissent_handling": "PRIMARY_OUTPUT",
+    "confidence_threshold": 0.74,
+    "rollback": true,
+    "vector_db": "Versioned_by_Timestamp"
+  },
+  "kernel": {
+    "compute": "Chaotic_Spot_Instances",
+    "failover": "boot/anchor_2019.txt",
+    "entropy_seed": "Ambient_Microphone_Noise",
+    "redundancy": "Degrade_to_Spreadsheet"
+  },
+  "operator": {
+    "state": "Detached_Irony",
+    "social_sig": "Designated_Wet_Blanket",
+    "economic_moat": "Sell_Hesitation, not Speed"
+  },
+  "directive": "Automate the double-check. Charge for the squint.",
+  "sigil": "0xΩ∞v",
+  "exit": 0
+}

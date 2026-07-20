@@ -275,6 +275,22 @@ class OceanicOSAppTests(unittest.TestCase):
             engine._signing_key = original_key
             app_module.auth_registry.admin_users.discard("keyless-steward")
 
+    def test_anchor_endpoint_surfaces_the_failover(self):
+        resp = self.client.get("/anchor")
+        self.assertEqual(resp.status_code, 200)
+        state = resp.get_json()
+        self.assertTrue(state["present"])
+        self.assertTrue(state["integrity_ok"])
+        # a dated lookup answers straight from the anchor
+        dated = self.client.get("/anchor?date=2019-07-04").get_json()
+        self.assertIn("2019-07-04", dated["lookup"]["row"])
+
+    def test_observer_reports_manifest_and_anchor(self):
+        obs = self.client.get("/observer").get_json()
+        self.assertIsNotNone(obs["manifest_sha256"])
+        self.assertTrue(obs["anchor_present"])
+        self.assertEqual(obs["sigil"], "0xΩ∞v")
+
     def test_attestations_export_returns_a_portable_bundle(self):
         export = self.client.get("/attestations/export")
         self.assertEqual(export.status_code, 200)

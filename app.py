@@ -9,6 +9,7 @@ from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, render_template, request
 
+import anchor
 from agent import AgentLoop
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
@@ -421,6 +422,10 @@ def observer():
         if constitution.exists()
         else None
     )
+    manifest = Path(__file__).parent / "boot" / "init.v1"
+    manifest_sha256 = (
+        hashlib.sha256(manifest.read_bytes()).hexdigest() if manifest.exists() else None
+    )
     return jsonify(
         {
             "root": "/",
@@ -428,10 +433,26 @@ def observer():
             "stateless": True,
             "sigil": "0xΩ∞v",
             "constitution_sha256": constitution_sha256,
+            "manifest_sha256": manifest_sha256,
+            "anchor_present": anchor.load_anchor()["present"],
             "exit": 0,
             "status": "continues",
         }
     )
+
+
+@app.route("/anchor", methods=["GET"])
+def anchor_of_last_resort():
+    """The failover cache surfaced — the 2019 dataset that answers offline.
+
+    An optional ?date=2019-07-04 looks a row up straight from the anchor,
+    proving the ground truth is reachable with the rest of the stack ignored.
+    """
+    state = anchor.load_anchor()
+    date = request.args.get("date")
+    if date:
+        state = {**state, "lookup": {"date": date, "row": anchor.anchor_line(date)}}
+    return jsonify(state)
 
 
 @app.route("/agent/run", methods=["POST"])
