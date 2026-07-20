@@ -266,6 +266,16 @@ def list_attestations():
     return jsonify(attestation_engine.list(actor=actor))
 
 
+@app.route("/attestations/verify", methods=["GET"])
+def verify_attestations():
+    """Confirm the ledger has not been retroactively edited.
+
+    The record attests to itself: this walks the hash chain and reports whether
+    it is intact, and if not, the first broken link.
+    """
+    return jsonify(attestation_engine.verify_chain())
+
+
 @app.route("/builds/export", methods=["GET"])
 def export_builds():
     buffer = io.StringIO()
@@ -570,6 +580,7 @@ def admin_overview():
             "attestations": len(attestations),
             "held": len(attestation_engine.held()),
             "cvi": attestation_engine.cvi()["cvi"],
+            "chain": attestation_engine.verify_chain(),
             "actors": sorted({build["actor"] for build in builds}),
             "usage": usage_log.summary()["by_action"],
         }

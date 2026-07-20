@@ -208,6 +208,14 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn(payload["majority"], ("approve", "revise"))
         self.assertTrue(payload["dissent"])
 
+    def test_attestations_verify_endpoint_reports_an_intact_chain(self):
+        verify = self.client.get("/attestations/verify")
+        self.assertEqual(verify.status_code, 200)
+        report = verify.get_json()
+        self.assertIn("intact", report)
+        self.assertTrue(report["intact"])
+        self.assertIsNone(report["broken_at"])
+
     def test_vaas_endpoints(self):
         cvi = self.client.get("/cvi")
         self.assertEqual(cvi.status_code, 200)

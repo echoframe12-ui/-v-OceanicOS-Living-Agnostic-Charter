@@ -1,12 +1,15 @@
 import hashlib
 import os
+import sqlite3
 import tempfile
 import unittest
 
 from attestation import (
     CONFIDENCE_THRESHOLD,
+    GENESIS_HASH,
     AttestationEngine,
     consensus_delta,
+    link_hash,
     score_confidence,
 )
 
@@ -138,6 +141,58 @@ class AttestationEngineTests(unittest.TestCase):
         engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", ["plan", "consensus:approve"], 0.9)
         self.assertEqual(engine.list()[0]["sources"], ["plan", "consensus:approve"])
+
+    def test_chain_links_each_entry_to_its_predecessor(self):
+        engine = AttestationEngine(self.db_path)
+        first = engine.attest("a", "one", [], 0.9)
+        second = engine.attest("b", "two", [], 0.9)
+        self.assertEqual(first["prev_hash"], GENESIS_HASH)
+        self.assertEqual(second["prev_hash"], first["entry_hash"])
+
+    def test_verify_chain_is_intact_for_an_untouched_ledger(self):
+        engine = AttestationEngine(self.db_path)
+        for i in range(3):
+            engine.attest(f"s{i}", f"content {i}", [], 0.9)
+        report = engine.verify_chain()
+        self.assertTrue(report["intact"])
+        self.assertEqual(report["length"], 3)
+        self.assertIsNone(report["broken_at"])
+
+    def test_verify_chain_is_intact_for_an_empty_ledger(self):
+        engine = AttestationEngine(self.db_path)
+        self.assertTrue(engine.verify_chain()["intact"])
+
+    def test_verify_chain_detects_a_retroactive_edit(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.5)  # held
+        engine.attest("c", "three", [], 0.9)
+        # tamper: flip the middle entry's held status straight in the database,
+        # exactly as an attacker rewriting the record would
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE attestations SET status = 'attested' WHERE id = 2")
+        report = engine.verify_chain()
+        self.assertFalse(report["intact"])
+        self.assertEqual(report["broken_at"], 2)
+
+    def test_chain_continues_across_instances(self):
+        worker_a = AttestationEngine(self.db_path)
+        worker_b = AttestationEngine(self.db_path)
+        a = worker_a.attest("a", "one", [], 0.9)
+        b = worker_b.attest("b", "two", [], 0.9)
+        self.assertEqual(b["prev_hash"], a["entry_hash"])
+        self.assertTrue(worker_a.verify_chain()["intact"])
+
+
+class LinkHashTests(unittest.TestCase):
+    def test_link_hash_is_deterministic_and_prev_sensitive(self):
+        entry = {
+            "subject": "a", "actor": "alice", "sha256": "x", "confidence": 0.9,
+            "threshold": CONFIDENCE_THRESHOLD, "status": "attested",
+            "sources": [], "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        self.assertEqual(link_hash(GENESIS_HASH, entry), link_hash(GENESIS_HASH, entry))
+        self.assertNotEqual(link_hash(GENESIS_HASH, entry), link_hash("deadbeef", entry))
 
 
 if __name__ == "__main__":
