@@ -197,6 +197,16 @@ docker run -p 5000:5000 oceanicos
 
 The SQLite database location can be configured with the `OCEANICOS_DB` environment variable (defaults to `oceanicos.db` in the working directory).
 
+There is also a `Makefile` for one-command full-stack builds:
+
+```bash
+make test           # run the suite
+make stack          # test -> docker build (the whole stack)
+make docker-run     # run the container
+```
+
+> **Worker note:** SQLite-backed state — builds ledger, auth/users, usage audit, memory, calendar, ground-truth cache — is shared across gunicorn workers. In-memory state — the attestation engine (and therefore `/cvi`), node mounts, and the model router — currently lives per process, so run with `--workers 1` for a consistent CVI across requests, or scale out only the SQLite-backed surface. Persisting attestations to SQLite is the natural next step for multi-worker CVI.
+
 ## Real Model Provider
 
 When the `ANTHROPIC_API_KEY` environment variable is set, the app registers a `claude` adapter ([claude_adapter.py](claude_adapter.py)) that routes prompts mentioning "claude" to a real Claude model (`claude-opus-4-8`) through the official Anthropic SDK:
