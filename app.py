@@ -13,6 +13,7 @@ import anchor
 import identity
 import metrics
 import openapi
+import readiness
 from agent import AgentLoop
 from cvi_history import CviHistory
 from artifacts import ArtifactRegistry
@@ -217,6 +218,19 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify(service.health())
+
+
+@app.route("/readyz", methods=["GET"])
+def readyz():
+    """Readiness probe — are the dependencies reachable, not just the process alive?
+
+    Checks the database and workspace (the operational dependencies) and reports
+    chain integrity as context. Returns 503 when a dependency is unavailable so
+    an orchestrator keeps the instance out of rotation until it recovers.
+    """
+    report = readiness.probe(service.db_path, os.getenv("OCEANICOS_WORKSPACE", "workspace"))
+    report["chain_intact"] = attestation_engine.verify_chain()["intact"]
+    return jsonify(report), (200 if report["ready"] else 503)
 
 
 @app.route("/openapi.json", methods=["GET"])

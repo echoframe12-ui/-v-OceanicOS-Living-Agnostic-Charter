@@ -231,6 +231,15 @@ class OceanicOSAppTests(unittest.TestCase):
             self.client.get("/attestations?min_confidence=high").status_code, 400
         )
 
+    def test_readyz_reports_ready(self):
+        resp = self.client.get("/readyz")
+        self.assertEqual(resp.status_code, 200)
+        report = resp.get_json()
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["checks"]["db"])
+        self.assertTrue(report["checks"]["workspace"])
+        self.assertIn("chain_intact", report)
+
     def test_openapi_endpoint_describes_the_live_api(self):
         resp = self.client.get("/openapi.json")
         self.assertEqual(resp.status_code, 200)

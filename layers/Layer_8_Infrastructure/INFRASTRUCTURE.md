@@ -16,6 +16,7 @@ What the platform runs on — and what it degrades to.
 | Graceful degradation | `/builds/export`, `/attestations/export` + `verify_ledger.py`, `/anchor` + `anchor.py` | The builds ledger exports as CSV; the attestation ledger exports as a self-contained bundle that `verify_ledger.py` re-walks offline; past both sits the Anchor of Last Resort (`boot/anchor_2019.txt`) — a fixed 2019 dataset that `anchor.py` answers from with nothing else running. The ground truth, and its integrity, survive without the system |
 | Boot | `oceanic_os.py` + `boot/init.v1` | `oceanic-os --boot boot/init.v1 --state stateless --exit 0` instantiates the stack from the ratified, hash-attested manifest and reports the live status of each layer |
 | Observability | `metrics.py` + `/metrics` | Platform state (CVI, held queue, SLA breaches, chain integrity, builds, adapters) in the Prometheus text exposition format — scrapeable by any monitoring stack, no custom integration |
+| Liveness & readiness | `/health`, `readiness.py` + `/readyz` | `/health` is liveness (process up); `/readyz` probes the real dependencies (database reachable, workspace writable) and returns 503 when one is down, so an orchestrator gates traffic correctly; see [DECISIONS/0026](../../DECISIONS/0026-readiness-probe.md) |
 
 ## Principles applied
 

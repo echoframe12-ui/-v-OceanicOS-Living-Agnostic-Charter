@@ -99,6 +99,7 @@ Then open the starter UI at http://127.0.0.1:5000/.
 Use the endpoints:
 
 - GET /health
+- GET /readyz
 - GET /openapi.json
 - POST /plans
 - POST /memory
