@@ -290,6 +290,10 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIsNotNone(obs["manifest_sha256"])
         self.assertTrue(obs["anchor_present"])
         self.assertEqual(obs["sigil"], "0xΩ∞v")
+        self.assertEqual(
+            obs["identity"],
+            ["/", "Ω∞v Compiler", "OceanicOS", "Living Agnostic Charter"],
+        )
 
     def test_attestations_export_returns_a_portable_bundle(self):
         export = self.client.get("/attestations/export")

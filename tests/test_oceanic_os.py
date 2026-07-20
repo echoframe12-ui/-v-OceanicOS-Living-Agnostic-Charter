@@ -20,6 +20,12 @@ class BootTests(unittest.TestCase):
         self.assertTrue(report["anchor_present"])
         self.assertEqual(report["exit"], 0)
 
+    def test_boot_states_the_identity_lineage(self):
+        report = oceanic_os.boot("boot/init.v1", stateless=True)
+        self.assertEqual(report["identity"][0], "/")
+        self.assertEqual(len(report["identity"]), 4)
+        self.assertIn("Living Agnostic Charter", report["identity"])
+
     def test_boot_names_every_layer(self):
         report = oceanic_os.boot("boot/init.v1", stateless=True)
         self.assertEqual(
@@ -43,6 +49,7 @@ class BootTests(unittest.TestCase):
         output = buffer.getvalue()
         self.assertIn("OceanicOS", output)
         self.assertIn("0xΩ∞v", output)
+        self.assertIn("Ω∞v Compiler", output)  # the lineage tree is printed
         self.assertIn("continues", output)
 
     def test_main_json_mode_emits_the_raw_report(self):

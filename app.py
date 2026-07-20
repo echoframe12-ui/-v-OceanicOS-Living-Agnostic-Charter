@@ -10,6 +10,7 @@ from pathlib import Path
 from flask import Flask, Response, g, jsonify, render_template, request
 
 import anchor
+import identity
 from agent import AgentLoop
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
@@ -432,6 +433,7 @@ def observer():
             "observer": "sole read/write head",
             "stateless": True,
             "sigil": "0xΩ∞v",
+            "identity": identity.as_list(),
             "constitution_sha256": constitution_sha256,
             "manifest_sha256": manifest_sha256,
             "anchor_present": anchor.load_anchor()["present"],

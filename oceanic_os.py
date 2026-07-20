@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import anchor
+import identity
 import models
 from attestation import CONFIDENCE_THRESHOLD, AttestationEngine
 from models import ModelAdapter, ModelRouter
@@ -80,6 +81,7 @@ def boot(manifest_path: str = DEFAULT_MANIFEST, stateless: bool = True) -> dict[
         "manifest": "OceanicOS Full-Stack Vibe Protocol",
         "manifest_present": manifest["present"],
         "manifest_sha256": manifest.get("sha256"),
+        "identity": identity.as_list(),
         "state": "stateless" if stateless else "stateful",
         "root": "/",
         "sigil": "0xΩ∞v",
@@ -118,6 +120,8 @@ def _render(report: dict[str, Any]) -> str:
         f" anchor={'present' if layers['kernel']['anchor_present'] else 'ABSENT'}",
         f"  operator   : {layers['operator']['economic_moat']}",
         f"  checkpoints: {report['checkpoint_policy']}",
+        "  identity   :",
+        *("    " + line for line in identity.render().splitlines()),
         "  Ghost Processes spawned. The compiler has read the Charter.",
         f"  exit: {report['exit']} ({report['status']}…)",
     ]
