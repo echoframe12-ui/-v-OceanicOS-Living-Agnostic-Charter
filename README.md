@@ -99,6 +99,8 @@ Then open the starter UI at http://127.0.0.1:5000/.
 Use the endpoints:
 
 - GET /health
+- GET /readyz
+- GET /openapi.json
 - POST /plans
 - POST /memory
 - GET /memory?query=review
@@ -112,15 +114,25 @@ Use the endpoints:
 - GET /models
 - POST /models/route
 - POST /models/consensus
+- POST /rules/evaluate
 - GET /builds
 - GET /builds/export
 - GET /builds/export.txt
 - GET /attestations
+- GET /attestations/held
+- POST /attestations/<id>/review
+- GET /attestations/<id>/reviews
+- GET /attestations/verify
+- POST /attestations/checkpoint
+- GET /attestations/export
 - GET /cvi
+- GET /cvi/history
+- GET /metrics
 - POST /nodes
 - GET /nodes
 - GET /pricing
 - GET /observer
+- GET /anchor
 - POST /auth/register
 - GET /auth/whoami
 - GET /auth/users
@@ -205,7 +217,7 @@ make stack          # test -> docker build (the whole stack)
 make docker-run     # run the container
 ```
 
-> **Worker note:** SQLite-backed state — builds ledger, auth/users, usage audit, memory, calendar, ground-truth cache — is shared across gunicorn workers. In-memory state — the attestation engine (and therefore `/cvi`), node mounts, and the model router — currently lives per process, so run with `--workers 1` for a consistent CVI across requests, or scale out only the SQLite-backed surface. Persisting attestations to SQLite is the natural next step for multi-worker CVI.
+> **Worker note:** SQLite-backed state — builds ledger, auth/users, usage audit, memory, calendar, ground-truth cache, and the attestation record (and therefore `/cvi`) — is shared across gunicorn workers, so the CVI reads the same from every worker (see [DECISIONS/0010](DECISIONS/0010-persistent-attestation-record.md)). What remains per process is request-derived and holds no verification ground truth: node mounts and the model-router registry. Multi-worker deployment needs no special flags.
 
 ## Real Model Provider
 
@@ -243,8 +255,19 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - The browser UI is a monochrome verification terminal with a deliberate 2.5-second render delay; it reports hashes, confidence, and source trails, never a single "final" answer.
 - `GET /builds/export` degrades the build ledger gracefully into a spreadsheet (CSV); `GET /builds/export.txt` degrades one step further, into plain text.
 - `GET /cvi` reports the Composite Verification Index — mean attestation confidence discounted by the held ratio; no evidence scores 0.0.
-- `POST /models/consensus` convenes a 3-adapter dissent panel.
-- `GET /observer` reports the root process: stateless, sole read/write head, sigil checksum `0xΩ∞v`, and a real SHA-256 of the constitution.
+- `GET /cvi/history` returns the CVI as a time series — the trend behind the headline number, recorded change-only at the points it can move (a build, a held-review decision), scoped by `?actor=` and capped by `?limit=`. The console draws a sparkline from it (see [DECISIONS/0023](DECISIONS/0023-cvi-trend-history.md)).
+- `GET /metrics` exposes platform state (CVI, held queue, SLA breaches, chain integrity, builds, adapters) in the **Prometheus text exposition format** — scrapeable by any monitoring stack with no custom integration. Aggregate scalars only, public like `/cvi` (see [DECISIONS/0020](DECISIONS/0020-prometheus-metrics.md)).
+- `GET /attestations` filters the record server-side with fully parameterized query params — `status` (attested/held), `min_confidence`/`max_confidence`, `subject` (substring), `since` (ISO), `limit`, plus `actor`. No params returns the whole record. Every filter is a bound parameter, so a SQL payload is matched as a literal, never executed (see [DECISIONS/0021](DECISIONS/0021-attestation-search.md)).
+- `GET /attestations/verify` walks the attestation hash chain and reports whether the ledger is intact — the record attests to itself. Each attestation carries the previous entry's hash and its own, so any retroactive edit breaks the chain and the walk returns the id of the first broken link (see [DECISIONS/0011](DECISIONS/0011-tamper-evident-ledger.md)). It also validates the latest signed checkpoint: `trustworthy` is true only when the chain is intact, the sealed head is still reproduced, and its signature validates under the current key.
+- `POST /attestations/checkpoint` (admin) seals the current chain head with an HMAC signature keyed by `OCEANICOS_SIGNING_KEY` — a secret that never touches the database. This raises the bar from tamper-*evident* to tamper-*resistant*: an attacker who rewrites the ledger and recomputes the chain forward still can't forge a checkpoint matching their new head without the key, so `verify` reports `trustworthy: false` (see [DECISIONS/0012](DECISIONS/0012-signed-checkpoints.md)). Returns 503 if no key is configured, 409 if the chain is already broken. Set `OCEANICOS_CHECKPOINT_EVERY=N` to seal the head automatically every N attestations so the signed guarantee operates without a human in the loop (default 0 = manual-only; `/admin/overview` reports the active `checkpoint_policy`; see [DECISIONS/0014](DECISIONS/0014-automatic-checkpoint-cadence.md)).
+- `GET /attestations/export` returns the whole sealed record — every attestation and checkpoint — as a self-contained JSON bundle. The standalone `verify_ledger.py` re-walks that bundle **offline**, with no service, database, or engine (`python verify_ledger.py --key <key> bundle.json`; exit 0 when intact and, with the key, trustworthy). Trust in the record becomes portable, not service-bound — the attestation ledger's answer to "the ground truth survives without the system" (see [DECISIONS/0013](DECISIONS/0013-portable-verifiable-export.md)).
+- `POST /models/consensus` convenes a 4-member dissent panel — three model heuristics plus a deterministic **rules engine** anchor ("3 competing LLMs + 1 rules engine"). `POST /rules/evaluate` returns the rules engine's verdict *with the named rules that fired and the reason each exists* — the one panel member that explains itself (see [DECISIONS/0017](DECISIONS/0017-rules-engine-panel-anchor.md)).
+- Held attestations get a stewardship resolution path (the Arbiter tier's held-review SLA, made real): `GET /attestations/held` (admin) lists them with a `pending`/`released`/`upheld` status; `POST /attestations/<id>/review` records a steward's `release` or `uphold` with a required reason; `GET /attestations/<id>/reviews` is the trail. Reviews are append-only records in their own table — the held attestation is never edited, so the chain stays intact — and a documented release lifts the item out of the CVI's held ratio (see [DECISIONS/0018](DECISIONS/0018-held-review-workflow.md)).
+- The SLA is timed, not just named: each held item carries an `sla` block — `pending` items report `age_seconds` and `sla_breached`; `decided` items report `decision_seconds` and `within_sla` (time to a decision, release or uphold). `OCEANICOS_HELD_SLA_SECONDS` sets the window (default 24h; `0` disables), and `/admin/overview` reports `held_sla_breached` (see [DECISIONS/0019](DECISIONS/0019-held-review-sla-aging.md)).
+- `GET /observer` reports the root process: stateless, sole read/write head, sigil checksum `0xΩ∞v`, a real SHA-256 of the constitution, and the ratified manifest's hash plus whether the Anchor is present.
+- `GET /anchor` surfaces the **Anchor of Last Resort** (`boot/anchor_2019.txt`) — a fixed 2019 dataset (the Gregorian calendar of 2019) that answers offline with no service, database, or model in the loop; `?date=2019-07-04` looks a row up straight from the cache. It's the floor of graceful degradation: past the CSV, past the spreadsheet, one stale `.txt` that cannot fail (see [DECISIONS/0015](DECISIONS/0015-boot-manifest-and-anchor.md)).
+- The stack boots from a ratified, hash-attested manifest: `python oceanic_os.py --boot boot/init.v1 --state stateless --exit 0` (or `make boot`) instantiates the live components each manifest layer maps to and reports their real status — the threshold in force, the dissent panel's size, the checkpoint policy, the manifest hash, `anchor: present`. It always exits 0; the system continues.
+- The system states one name of itself, root to charter (`/` → Ω∞v Compiler → OceanicOS → Living Agnostic Charter). The boot banner and `/observer` both speak it from the single source in [`identity.py`](identity.py); see [TREE.md](TREE.md) and [DECISIONS/0016](DECISIONS/0016-canonical-identity.md).
 - The platform is offered commercially as Verification-as-a-Service — see [docs/VAAS.md](docs/VAAS.md) and `GET /pricing`.
 
 ## Identity and Multi-User Attribution
@@ -269,7 +292,7 @@ curl http://127.0.0.1:5000/me/cvi -H 'Authorization: Bearer <token>'      # your
 
 Stewardship is a role, not a free-for-all (see [DECISIONS/0004](DECISIONS/0004-admin-stewardship-role.md)): admins are appointed out-of-band with `OCEANICOS_ADMIN_USERS` (comma-separated usernames) and get aggregate cross-actor views (`/admin/overview`, `/admin/users`) — platform health and per-actor build counts, not the content of members' private slices. Non-admins get 403. Members can't promote themselves.
 
-The VaaS pricing tiers are enforced as rolling-window build quotas (see [DECISIONS/0005](DECISIONS/0005-per-tier-quotas.md) and [DECISIONS/0009](DECISIONS/0009-windowed-rate-limits.md)): new accounts default to **attestor** (10 builds/hour), and an admin assigns tiers with `POST /admin/users/<username>/tier`. `/builder/run` returns **429** once a named actor exceeds its rate in the current window (the response carries `resets_at`); usage recovers continuously as builds age out. `GET /me/quota` shows `used`, `window_seconds`, and `resets_at`. The window is configurable via `OCEANICOS_QUOTA_WINDOW` (default 3600s); the anonymous open path is unmetered.
+The VaaS pricing tiers are enforced as rolling-window build quotas (see [DECISIONS/0005](DECISIONS/0005-per-tier-quotas.md) and [DECISIONS/0009](DECISIONS/0009-windowed-rate-limits.md)): new accounts default to **attestor** (10 builds/hour), and an admin assigns tiers with `POST /admin/users/<username>/tier`. `/builder/run` returns **429** once a named actor exceeds its rate in the current window (the response carries `resets_at`); usage recovers continuously as builds age out. `GET /me/quota` shows `used`, `window_seconds`, and `resets_at`. The window is configurable via `OCEANICOS_QUOTA_WINDOW` (default 3600s); the anonymous open path is unmetered. Metered responses also carry the standard `X-RateLimit-Limit`/`-Remaining`/`-Reset` headers, and a 429 adds `Retry-After` — so clients pace and back off by convention, no body parsing (see [DECISIONS/0024](DECISIONS/0024-rate-limit-headers.md)); unlimited (sovereign) tiers emit none.
 
 The whole journey, prompt 1 to now, is compressed in [docs/COMPRESS.md](docs/COMPRESS.md) — `Gap → VaaS → Ω∞v → Observer → 0`.
 

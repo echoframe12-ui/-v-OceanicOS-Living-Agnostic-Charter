@@ -1,14 +1,21 @@
 import csv
 import hashlib
 import io
+import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, render_template, request
 
+import anchor
+import identity
+import metrics
+import openapi
+import readiness
 from agent import AgentLoop
+from cvi_history import CviHistory
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
 from auth import ANONYMOUS, AuthRegistry
@@ -21,6 +28,8 @@ from nodes import NodeRegistry
 from planner import Planner
 from plugins import PluginRegistry
 import quotas
+from held_reviews import HeldReviewLog, VERDICTS, sla_status
+from rules import RulesAdapter, RulesEngine
 from usage import UsageLog
 from review import ReviewEngine
 from server import OceanicOSService
@@ -55,6 +64,10 @@ model_router.register(
 claude_adapter = create_claude_adapter(keywords=["claude"])
 if claude_adapter is not None:
     model_router.register(claude_adapter)
+# The deterministic anchor: a rules engine that always weighs in and explains
+# itself — "3 competing LLMs + 1 rules engine" from the manifest, made real.
+rules_engine = RulesEngine()
+model_router.register(RulesAdapter(rules_engine))
 agent_loop = AgentLoop()
 state_snapshot = StateSnapshot()
 review_engine = ReviewEngine()
@@ -62,10 +75,24 @@ decision_registry = DecisionRegistry()
 artifact_registry = ArtifactRegistry()
 dashboard = Dashboard()
 plugin_registry = PluginRegistry()
-attestation_engine = AttestationEngine()
+attestation_engine = AttestationEngine(
+    str(service.db_path),
+    signing_key=os.getenv("OCEANICOS_SIGNING_KEY", ""),
+    checkpoint_every=int(os.getenv("OCEANICOS_CHECKPOINT_EVERY", "0")),
+)
 node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
 usage_log = UsageLog(str(service.db_path))
+held_review_log = HeldReviewLog(str(service.db_path))
+cvi_history = CviHistory(str(service.db_path))
+# Time-to-decision SLA for held attestations (seconds). 0 disables breach flags.
+HELD_SLA_SECONDS = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
+
+
+def _snapshot_cvi() -> None:
+    """Record the current platform CVI when it has moved (round 29)."""
+    snapshot = attestation_engine.cvi(released_ids=held_review_log.released_ids())
+    cvi_history.record_if_changed(snapshot)
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
@@ -120,6 +147,29 @@ def _windowed_quota(actor: str, tier: str) -> dict:
     )
 
 
+def _rate_limit_headers(status: dict, now: datetime | None = None) -> dict[str, str]:
+    """Standard rate-limit headers from a quota status.
+
+    Finite tiers emit `X-RateLimit-Limit`/`-Remaining` (and `-Reset` as a unix
+    timestamp once the window has an oldest build to age out). An exceeded quota
+    adds `Retry-After` in seconds. Unlimited tiers (sovereign) emit nothing —
+    there is no ceiling to report.
+    """
+    if status["limit"] is None:
+        return {}
+    now = now or datetime.now(timezone.utc)
+    headers = {
+        "X-RateLimit-Limit": str(status["limit"]),
+        "X-RateLimit-Remaining": str(status["remaining"]),
+    }
+    if status["resets_at"]:
+        reset = datetime.fromisoformat(status["resets_at"])
+        headers["X-RateLimit-Reset"] = str(int(reset.timestamp()))
+        if status["exceeded"]:
+            headers["Retry-After"] = str(max(0, int((reset - now).total_seconds())))
+    return headers
+
+
 def require_auth(view):
     """Attribute every request to an actor; enforce a token when locked.
 
@@ -168,6 +218,34 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify(service.health())
+
+
+@app.route("/readyz", methods=["GET"])
+def readyz():
+    """Readiness probe — are the dependencies reachable, not just the process alive?
+
+    Checks the database and workspace (the operational dependencies) and reports
+    chain integrity as context. Returns 503 when a dependency is unavailable so
+    an orchestrator keeps the instance out of rotation until it recovers.
+    """
+    report = readiness.probe(service.db_path, os.getenv("OCEANICOS_WORKSPACE", "workspace"))
+    report["chain_intact"] = attestation_engine.verify_chain()["intact"]
+    return jsonify(report), (200 if report["ready"] else 503)
+
+
+@app.route("/openapi.json", methods=["GET"])
+def openapi_spec():
+    """The API describes itself — OpenAPI generated from the live route table."""
+    return jsonify(
+        openapi.generate(
+            app.url_map,
+            app.view_functions,
+            title="OceanicOS VaaS API",
+            version="1.0",
+            description="Verification-as-a-Service — attest, don't assert. "
+            "Spec generated from the live routes, always current.",
+        )
+    )
 
 
 @app.route("/plans", methods=["POST"])
@@ -257,13 +335,166 @@ def route_model():
 def model_consensus():
     payload = request.get_json(silent=True) or {}
     prompt = payload.get("prompt", "")
-    return jsonify(model_router.route_all(prompt, panel=3))
+    # panel of 4: the three model heuristics plus the rules engine anchor
+    return jsonify(model_router.route_all(prompt, panel=4))
+
+
+@app.route("/rules/evaluate", methods=["POST"])
+def rules_evaluate():
+    """The rules engine's explainable verdict — which rules fired, and why.
+
+    The panel member you can audit: unlike the model heuristics, this returns
+    the named rules that triggered a revise and the reason each exists.
+    """
+    payload = request.get_json(silent=True) or {}
+    prompt = payload.get("prompt", "")
+    return jsonify(rules_engine.evaluate(prompt))
 
 
 @app.route("/attestations", methods=["GET"])
 def list_attestations():
-    actor = request.args.get("actor")
-    return jsonify(attestation_engine.list(actor=actor))
+    """List the record, optionally filtered.
+
+    Query params: actor, status (attested|held), min_confidence, max_confidence,
+    subject (substring), since (ISO timestamp), limit. No params returns the
+    whole record, so existing callers are unaffected.
+    """
+    args = request.args
+    status = args.get("status")
+    if status is not None and status not in ("attested", "held"):
+        return jsonify({"error": "status must be 'attested' or 'held'"}), 400
+    try:
+        min_conf = args.get("min_confidence", type=float) if "min_confidence" in args else None
+        max_conf = args.get("max_confidence", type=float) if "max_confidence" in args else None
+        limit = args.get("limit", type=int) if "limit" in args else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "min_confidence/max_confidence must be numbers, limit an integer"}), 400
+    # request.args.get(type=...) returns None on a parse failure rather than raising
+    for name, value in (("min_confidence", min_conf), ("max_confidence", max_conf), ("limit", limit)):
+        if name in args and value is None:
+            return jsonify({"error": f"{name} is not a valid number"}), 400
+    return jsonify(
+        attestation_engine.search(
+            actor=args.get("actor"),
+            status=status,
+            min_confidence=min_conf,
+            max_confidence=max_conf,
+            subject_contains=args.get("subject"),
+            since=args.get("since"),
+            limit=limit,
+        )
+    )
+
+
+def _review_status(att_id: int, released: set[int]) -> str:
+    if att_id in released:
+        return "released"
+    return "upheld" if held_review_log.latest_for(att_id) else "pending"
+
+
+@app.route("/attestations/held", methods=["GET"])
+@require_admin
+def list_held_attestations():
+    """Held items awaiting or carrying a steward's decision.
+
+    Each held attestation is annotated with its latest review status —
+    `pending`, `released`, or `upheld` — so the steward sees the queue and its
+    resolutions. Stewardship view: admin only.
+    """
+    released = held_review_log.released_ids()
+    items = []
+    for att in attestation_engine.held():
+        latest = held_review_log.latest_for(att["id"])
+        items.append(
+            {
+                **att,
+                "review_status": _review_status(att["id"], released),
+                "latest_review": latest,
+                "sla": sla_status(att["created_at"], latest, HELD_SLA_SECONDS),
+            }
+        )
+    return jsonify(items)
+
+
+@app.route("/attestations/<int:att_id>/review", methods=["POST"])
+@require_admin
+def review_held_attestation(att_id: int):
+    """Record a steward's decision on a held attestation — release or uphold.
+
+    Append-only: the review references the held item and never edits it, so the
+    hash chain stays intact. A documented release lifts the item out of the CVI's
+    held ratio; an uphold keeps it held, on the record with a reason.
+    """
+    payload = request.get_json(silent=True) or {}
+    verdict = payload.get("verdict", "")
+    reason = (payload.get("reason") or "").strip()
+
+    att = next((a for a in attestation_engine.list() if a["id"] == att_id), None)
+    if att is None:
+        return jsonify({"error": "attestation not found"}), 404
+    if att["status"] != "held":
+        return jsonify({"error": "attestation is not held"}), 409
+    if verdict not in VERDICTS:
+        return jsonify({"error": f"verdict must be one of {list(VERDICTS)}"}), 400
+    if not reason:
+        return jsonify({"error": "a reason is required"}), 400
+
+    review = held_review_log.record(att_id, g.actor, verdict, reason)
+    usage_log.record(g.actor, "held_review", g.tier, f"{verdict} #{att_id}")
+    _snapshot_cvi()  # a release/uphold can move the CVI
+    return jsonify(review)
+
+
+@app.route("/attestations/<int:att_id>/reviews", methods=["GET"])
+def list_held_reviews(att_id: int):
+    return jsonify(held_review_log.list(att_id))
+
+
+@app.route("/attestations/verify", methods=["GET"])
+def verify_attestations():
+    """Confirm the ledger has not been tampered with.
+
+    Walks the hash chain (edit-in-place detection) and checks the latest signed
+    checkpoint (whole-rewrite detection): a record is trustworthy only when the
+    chain is intact, its signed head is still reproduced, and the signature
+    validates under the current key.
+    """
+    return jsonify(attestation_engine.verify())
+
+
+@app.route("/attestations/checkpoint", methods=["POST"])
+@require_admin
+def checkpoint_attestations():
+    """Seal the current chain head with an operator-key signature.
+
+    Requires OCEANICOS_SIGNING_KEY. Refuses to seal an already-broken chain.
+    """
+    if not attestation_engine.can_sign:
+        return (
+            jsonify({"error": "no signing key configured (set OCEANICOS_SIGNING_KEY)"}),
+            503,
+        )
+    try:
+        return jsonify(attestation_engine.checkpoint())
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 409
+
+
+@app.route("/attestations/export", methods=["GET"])
+def export_attestations():
+    """The whole sealed attestation record as a portable, offline-verifiable bundle.
+
+    Carries every attestation and checkpoint so the chain and its seals can be
+    checked with `verify_ledger.py` — no service, no database. The ground truth
+    survives the system.
+    """
+    return Response(
+        json.dumps(attestation_engine.export(), indent=2),
+        mimetype="application/json",
+        headers={
+            "Content-Disposition": "attachment; filename=oceanicos-attestations.json"
+        },
+    )
 
 
 @app.route("/builds/export", methods=["GET"])
@@ -306,7 +537,58 @@ def export_builds_txt():
 
 @app.route("/cvi", methods=["GET"])
 def composite_verification_index():
-    return jsonify(attestation_engine.cvi())
+    return jsonify(attestation_engine.cvi(released_ids=held_review_log.released_ids()))
+
+
+@app.route("/cvi/history", methods=["GET"])
+def cvi_trend():
+    """The CVI over time — the trend behind the headline number.
+
+    `?actor=` selects a series (default the platform-wide one); `?limit=` caps
+    to the most recent N points. Public and aggregate, consistent with `/cvi`.
+    """
+    actor = request.args.get("actor", "")
+    limit = request.args.get("limit", type=int) if "limit" in request.args else None
+    if "limit" in request.args and limit is None:
+        return jsonify({"error": "limit must be an integer"}), 400
+    return jsonify(cvi_history.list(actor=actor, limit=limit))
+
+
+@app.route("/metrics", methods=["GET"])
+def prometheus_metrics():
+    """Platform state in the Prometheus text format — scrapeable by any monitor.
+
+    Aggregate scalars only (no per-actor content), consistent with `/cvi` being
+    public: verification quality, the held queue and its SLA breaches, and the
+    ledger's integrity, all as one standard exposition.
+    """
+    verify = attestation_engine.verify()
+    held = attestation_engine.held()
+    released = held_review_log.released_ids()
+    held_pending = [att for att in held if att["id"] not in released]
+    held_breached = sum(
+        1
+        for att in held
+        if sla_status(
+            att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS
+        ).get("sla_breached")
+    )
+    policy = attestation_engine.checkpoint_policy
+    snapshot = [
+        {"name": "oceanicos_attestations_total", "help": "Total attestations on record", "value": len(attestation_engine.list())},
+        {"name": "oceanicos_attestations_held", "help": "Attestations held below the confidence threshold", "value": len(held)},
+        {"name": "oceanicos_held_pending", "help": "Held attestations awaiting a steward decision", "value": len(held_pending)},
+        {"name": "oceanicos_held_sla_breached", "help": "Pending held attestations past the review SLA", "value": held_breached},
+        {"name": "oceanicos_cvi", "help": "Composite Verification Index (0-1), released items credited", "value": attestation_engine.cvi(released_ids=released)["cvi"]},
+        {"name": "oceanicos_builds_total", "help": "Total builds in the ledger", "value": len(service.list_builds())},
+        {"name": "oceanicos_users_total", "help": "Registered accounts", "value": len(auth_registry.list_users())},
+        {"name": "oceanicos_chain_intact", "help": "Attestation hash chain integrity (1 intact, 0 broken)", "value": bool(verify["intact"])},
+        {"name": "oceanicos_chain_length", "help": "Number of links in the attestation chain", "value": verify["length"]},
+        {"name": "oceanicos_chain_trustworthy", "help": "Chain intact and signed head verified (1 yes, 0 no)", "value": bool(verify.get("trustworthy"))},
+        {"name": "oceanicos_checkpoint_auto", "help": "Automatic checkpoint sealing enabled (1 yes, 0 no)", "value": policy["auto"]},
+        {"name": "oceanicos_model_adapters", "help": "Registered dissent-panel adapters", "value": len(model_router.list_adapters())},
+    ]
+    return Response(metrics.render(snapshot), mimetype=metrics.CONTENT_TYPE)
 
 
 @app.route("/nodes", methods=["POST"])
@@ -333,12 +615,17 @@ def pricing():
                 {
                     "name": "Attestor",
                     "price": 8500,
-                    "includes": ["attestation API", "CVI", "csv/txt ledger exports"],
+                    "includes": [
+                        "attestation API",
+                        "CVI",
+                        "csv/txt ledger exports",
+                        "verifiable attestation export",
+                    ],
                 },
                 {
                     "name": "Arbiter",
                     "price": 25500,
-                    "includes": ["everything in Attestor", "3-adapter dissent panels", "held-review SLAs"],
+                    "includes": ["everything in Attestor", "3-model + rules-engine dissent panels", "held-review SLAs"],
                 },
                 {
                     "name": "Sovereign",
@@ -364,17 +651,38 @@ def observer():
         if constitution.exists()
         else None
     )
+    manifest = Path(__file__).parent / "boot" / "init.v1"
+    manifest_sha256 = (
+        hashlib.sha256(manifest.read_bytes()).hexdigest() if manifest.exists() else None
+    )
     return jsonify(
         {
             "root": "/",
             "observer": "sole read/write head",
             "stateless": True,
             "sigil": "0xΩ∞v",
+            "identity": identity.as_list(),
             "constitution_sha256": constitution_sha256,
+            "manifest_sha256": manifest_sha256,
+            "anchor_present": anchor.load_anchor()["present"],
             "exit": 0,
             "status": "continues",
         }
     )
+
+
+@app.route("/anchor", methods=["GET"])
+def anchor_of_last_resort():
+    """The failover cache surfaced — the 2019 dataset that answers offline.
+
+    An optional ?date=2019-07-04 looks a row up straight from the anchor,
+    proving the ground truth is reachable with the rest of the stack ignored.
+    """
+    state = anchor.load_anchor()
+    date = request.args.get("date")
+    if date:
+        state = {**state, "lookup": {"date": date, "row": anchor.anchor_line(date)}}
+    return jsonify(state)
 
 
 @app.route("/agent/run", methods=["POST"])
@@ -477,24 +785,28 @@ def run_builder():
         status = _windowed_quota(g.actor, g.tier)
         if status["exceeded"]:
             usage_log.record(g.actor, "quota_exceeded", g.tier, task)
-            return (
-                jsonify(
-                    {
-                        "error": "quota exceeded",
-                        "tier": status["tier"],
-                        "limit": status["limit"],
-                        "used": status["used"],
-                        "window_seconds": status["window_seconds"],
-                        "resets_at": status["resets_at"],
-                    }
-                ),
-                429,
+            resp = jsonify(
+                {
+                    "error": "quota exceeded",
+                    "tier": status["tier"],
+                    "limit": status["limit"],
+                    "used": status["used"],
+                    "window_seconds": status["window_seconds"],
+                    "resets_at": status["resets_at"],
+                }
             )
+            resp.headers.extend(_rate_limit_headers(status))
+            return resp, 429
 
     result = builder.run(task, context, actor=g.actor)
     usage_log.record(g.actor, "build", g.tier, task)
+    _snapshot_cvi()
     result["dashboard"] = dashboard.summary()
-    return jsonify(result)
+    resp = jsonify(result)
+    if g.actor != ANONYMOUS:
+        # recompute after the build so Remaining reflects the slot just consumed
+        resp.headers.extend(_rate_limit_headers(_windowed_quota(g.actor, g.tier)))
+    return resp
 
 
 @app.route("/builder/history", methods=["GET"])
@@ -563,13 +875,28 @@ def admin_users():
 def admin_overview():
     builds = service.list_builds()
     attestations = attestation_engine.list()
+    held = attestation_engine.held()
+    released = held_review_log.released_ids()
+    held_pending = len([att for att in held if att["id"] not in released])
+    held_sla_breached = sum(
+        1
+        for att in held
+        if sla_status(
+            att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS
+        ).get("sla_breached")
+    )
     return jsonify(
         {
             "users": len(auth_registry.list_users()),
             "builds": len(builds),
             "attestations": len(attestations),
-            "held": len(attestation_engine.held()),
-            "cvi": attestation_engine.cvi()["cvi"],
+            "held": len(held),
+            "held_pending": held_pending,
+            "held_sla_breached": held_sla_breached,
+            "held_sla_seconds": HELD_SLA_SECONDS,
+            "cvi": attestation_engine.cvi(released_ids=released)["cvi"],
+            "chain": attestation_engine.verify(),
+            "checkpoint_policy": attestation_engine.checkpoint_policy,
             "actors": sorted({build["actor"] for build in builds}),
             "usage": usage_log.summary()["by_action"],
         }
@@ -598,13 +925,20 @@ def my_memory():
 @app.route("/me/cvi", methods=["GET"])
 @require_auth
 def my_cvi():
-    return jsonify(attestation_engine.cvi(actor=g.actor))
+    return jsonify(
+        attestation_engine.cvi(
+            actor=g.actor, released_ids=held_review_log.released_ids()
+        )
+    )
 
 
 @app.route("/me/quota", methods=["GET"])
 @require_auth
 def my_quota():
-    return jsonify(_windowed_quota(g.actor, g.tier))
+    status = _windowed_quota(g.actor, g.tier)
+    resp = jsonify(status)
+    resp.headers.extend(_rate_limit_headers(status))
+    return resp
 
 
 @app.route("/me/usage", methods=["GET"])

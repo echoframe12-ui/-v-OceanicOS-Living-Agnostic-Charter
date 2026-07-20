@@ -6,8 +6,9 @@ The surfaces people actually touch.
 
 | Concept | Module | Notes |
 | --- | --- | --- |
-| HTTP API | `app.py` | ~30 endpoints covering plans, memory, tools, workflows, models, builds, attestations, reviews, decisions, artifacts, dashboard, and the builder |
-| Verification terminal | `templates/index.html` | Monochrome, zero rounded corners, blinking cursor, deliberate 2.5s render delay; displays hashes, confidence, and source trails — never a single "final" answer |
+| HTTP API | `app.py` | ~60 endpoints covering plans, memory, tools, workflows, models, builds, attestations, held-review, checkpoints, CVI + history, quotas, metrics, rules, anchor, decisions, artifacts, dashboard, and the builder |
+| Self-describing API | `openapi.py` + `/openapi.json` | A valid OpenAPI 3 doc generated from the live route table — accurate by construction, never drifts; see [DECISIONS/0025](../../DECISIONS/0025-self-describing-api.md) |
+| Interactive console | `templates/index.html` | Single-page console exercising every subsystem live — tiles, identity, build+attest (deliberate 2.5s render delay), the dissent panel, rules, ledger search, integrity + checkpoint, held-review SLA, anchor, metrics, pricing; see [DECISIONS/0022](../../DECISIONS/0022-interactive-console.md) |
 | Demo entry points | `main.py`, `universal_builder.py` CLI | Runnable without the web layer |
 
 ## Principles applied

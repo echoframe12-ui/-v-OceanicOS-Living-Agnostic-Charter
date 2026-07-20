@@ -1,6 +1,8 @@
+import os
 import tempfile
 import unittest
 
+from attestation import AttestationEngine
 from models import (
     ModelAdapter,
     ModelRouter,
@@ -11,8 +13,19 @@ from models import (
 from universal_builder import UniversalBuilder
 
 
+def _isolated_engine():
+    """A per-builder attestation engine so held/CVI counts don't leak across
+    tests through the shared OCEANICOS_DB."""
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    handle.close()
+    return AttestationEngine(handle.name)
+
+
 def make_builder():
-    return UniversalBuilder(workspace_root=tempfile.mkdtemp(prefix="oceanicos-ws-"))
+    return UniversalBuilder(
+        attestation_engine=_isolated_engine(),
+        workspace_root=tempfile.mkdtemp(prefix="oceanicos-ws-"),
+    )
 
 
 def panel_router():
@@ -26,6 +39,7 @@ def panel_router():
 def make_panel_builder():
     return UniversalBuilder(
         model_router=panel_router(),
+        attestation_engine=_isolated_engine(),
         workspace_root=tempfile.mkdtemp(prefix="oceanicos-ws-"),
     )
 

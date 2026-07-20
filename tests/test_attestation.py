@@ -1,10 +1,16 @@
 import hashlib
+import os
+import sqlite3
+import tempfile
 import unittest
 
 from attestation import (
     CONFIDENCE_THRESHOLD,
+    GENESIS_HASH,
     AttestationEngine,
+    checkpoint_signature,
     consensus_delta,
+    link_hash,
     score_confidence,
 )
 
@@ -59,8 +65,17 @@ class ScoreConfidenceTests(unittest.TestCase):
 
 
 class AttestationEngineTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
     def test_attest_hashes_content(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         entry = engine.attest("build-1", "the content", ["plan"], 0.9)
         self.assertEqual(
             entry["sha256"], hashlib.sha256(b"the content").hexdigest()
@@ -69,19 +84,19 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(entry["threshold"], CONFIDENCE_THRESHOLD)
 
     def test_below_threshold_is_held(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         entry = engine.attest("build-1", "content", ["plan"], 0.7)
         self.assertEqual(entry["status"], "held")
         self.assertEqual(len(engine.held()), 1)
 
     def test_cvi_with_no_evidence_is_zero(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         report = engine.cvi()
         self.assertEqual(report["cvi"], 0.0)
         self.assertEqual(report["samples"], 0)
 
     def test_attestations_are_scoped_by_actor(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9, actor="alice")
         engine.attest("b", "two", [], 0.9, actor="bob")
         self.assertEqual(len(engine.list()), 2)
@@ -89,14 +104,14 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(engine.list(actor="alice")[0]["actor"], "alice")
 
     def test_cvi_scopes_to_actor(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9, actor="alice")
         engine.attest("b", "two", [], 0.5, actor="bob")  # held
         self.assertEqual(engine.cvi(actor="alice")["cvi"], 0.9)
         self.assertEqual(engine.cvi(actor="bob")["held_ratio"], 1.0)
 
     def test_cvi_discounts_held_attestations(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9)
         engine.attest("b", "two", [], 0.7)  # held
         report = engine.cvi()
@@ -105,13 +120,320 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(report["held_ratio"], 0.5)
         self.assertEqual(report["cvi"], 0.4)
 
+    def test_cvi_credits_reviewed_released_items(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        held = engine.attest("b", "two", [], 0.7)  # held, id 2
+        self.assertEqual(engine.cvi()["held_ratio"], 0.5)
+        # a steward's release lifts it out of the held ratio
+        credited = engine.cvi(released_ids={held["id"]})
+        self.assertEqual(credited["held_ratio"], 0.0)
+        self.assertEqual(credited["cvi"], 0.8)  # no longer discounted
+
     def test_list_preserves_order_and_ids(self):
-        engine = AttestationEngine()
+        engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9)
         engine.attest("b", "two", [], 0.5)
         entries = engine.list()
         self.assertEqual([entry["id"] for entry in entries], [1, 2])
         self.assertEqual(len(engine.held()), 1)
+
+    def test_record_is_shared_across_instances(self):
+        # Two engines on one database stand in for two gunicorn workers: an
+        # attestation written by one is visible — and folded into the CVI — by
+        # the other. This is the whole point of persisting the record.
+        worker_a = AttestationEngine(self.db_path)
+        worker_b = AttestationEngine(self.db_path)
+        worker_a.attest("shared", "content", ["plan"], 0.9, actor="alice")
+        self.assertEqual(len(worker_b.list()), 1)
+        self.assertEqual(worker_b.cvi(actor="alice")["samples"], 1)
+
+    def test_sources_survive_the_round_trip(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", ["plan", "consensus:approve"], 0.9)
+        self.assertEqual(engine.list()[0]["sources"], ["plan", "consensus:approve"])
+
+    def test_chain_links_each_entry_to_its_predecessor(self):
+        engine = AttestationEngine(self.db_path)
+        first = engine.attest("a", "one", [], 0.9)
+        second = engine.attest("b", "two", [], 0.9)
+        self.assertEqual(first["prev_hash"], GENESIS_HASH)
+        self.assertEqual(second["prev_hash"], first["entry_hash"])
+
+    def test_verify_chain_is_intact_for_an_untouched_ledger(self):
+        engine = AttestationEngine(self.db_path)
+        for i in range(3):
+            engine.attest(f"s{i}", f"content {i}", [], 0.9)
+        report = engine.verify_chain()
+        self.assertTrue(report["intact"])
+        self.assertEqual(report["length"], 3)
+        self.assertIsNone(report["broken_at"])
+
+    def test_verify_chain_is_intact_for_an_empty_ledger(self):
+        engine = AttestationEngine(self.db_path)
+        self.assertTrue(engine.verify_chain()["intact"])
+
+    def test_verify_chain_detects_a_retroactive_edit(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.5)  # held
+        engine.attest("c", "three", [], 0.9)
+        # tamper: flip the middle entry's held status straight in the database,
+        # exactly as an attacker rewriting the record would
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE attestations SET status = 'attested' WHERE id = 2")
+        report = engine.verify_chain()
+        self.assertFalse(report["intact"])
+        self.assertEqual(report["broken_at"], 2)
+
+    def test_chain_continues_across_instances(self):
+        worker_a = AttestationEngine(self.db_path)
+        worker_b = AttestationEngine(self.db_path)
+        a = worker_a.attest("a", "one", [], 0.9)
+        b = worker_b.attest("b", "two", [], 0.9)
+        self.assertEqual(b["prev_hash"], a["entry_hash"])
+        self.assertTrue(worker_a.verify_chain()["intact"])
+
+
+class SignedCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_checkpoint_requires_a_signing_key(self):
+        engine = AttestationEngine(self.db_path, signing_key="")
+        self.assertFalse(engine.can_sign)
+        engine.attest("a", "one", [], 0.9)
+        with self.assertRaises(RuntimeError):
+            engine.checkpoint()
+
+    def test_checkpoint_seals_and_verifies_the_head(self):
+        engine = AttestationEngine(self.db_path, signing_key="operator-secret")
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        cp = engine.checkpoint()
+        report = engine.verify()
+        self.assertTrue(report["trustworthy"])
+        self.assertTrue(report["checkpoint"]["signature_valid"])
+        self.assertTrue(report["checkpoint"]["head_reproduced"])
+        self.assertEqual(report["checkpoint"]["length"], 2)
+        self.assertEqual(cp["head_hash"], report["head"])
+
+    def test_checkpoint_refuses_a_broken_chain(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("a", "one", [], 0.9)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE attestations SET confidence = 0.1 WHERE id = 1")
+        with self.assertRaises(RuntimeError):
+            engine.checkpoint()
+
+    def test_verify_without_a_checkpoint_reports_uncheckpointed(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("a", "one", [], 0.9)
+        report = engine.verify()
+        self.assertFalse(report["checkpointed"])
+        self.assertNotIn("trustworthy", report)
+
+    def test_wrong_key_fails_signature_validation(self):
+        signer = AttestationEngine(self.db_path, signing_key="the-real-key")
+        signer.attest("a", "one", [], 0.9)
+        signer.checkpoint()
+        # a verifier holding the wrong key cannot validate the signature
+        impostor = AttestationEngine(self.db_path, signing_key="a-different-key")
+        report = impostor.verify()
+        self.assertFalse(report["checkpoint"]["signature_valid"])
+        self.assertFalse(report["trustworthy"])
+
+    def test_checkpoint_catches_a_recomputed_forward_rewrite(self):
+        # The whole point of signing: an attacker rewrites a past entry AND
+        # recomputes every later hash so the chain is internally consistent —
+        # verify_chain alone would pass. The signed checkpoint still catches it,
+        # because the new head no longer matches the sealed one and the attacker
+        # cannot forge a signature over their forged head without the key.
+        engine = AttestationEngine(self.db_path, signing_key="operator-secret")
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        engine.checkpoint()  # seals head over length 2
+
+        # attacker rewrites row 1 and rebuilds the chain forward, honestly
+        rows = engine.list()
+        rows[0]["subject"] = "tampered"
+        prev = GENESIS_HASH
+        with sqlite3.connect(self.db_path) as conn:
+            for row in rows:
+                new_entry_hash = link_hash(prev, row)
+                conn.execute(
+                    "UPDATE attestations SET subject = ?, prev_hash = ?, entry_hash = ? WHERE id = ?",
+                    (row["subject"], prev, new_entry_hash, row["id"]),
+                )
+                prev = new_entry_hash
+
+        report = engine.verify()
+        # the chain looks internally consistent to the walk...
+        self.assertTrue(report["intact"])
+        # ...but the sealed head is no longer reproduced, and the signature over
+        # it still validates — so the tamper is caught and trust is withdrawn
+        self.assertFalse(report["checkpoint"]["head_reproduced"])
+        self.assertTrue(report["checkpoint"]["signature_valid"])
+        self.assertFalse(report["trustworthy"])
+
+    def test_list_checkpoints_returns_every_seal_in_order(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("a", "one", [], 0.9)
+        first = engine.checkpoint()
+        engine.attest("b", "two", [], 0.9)
+        second = engine.checkpoint()
+        checkpoints = engine.list_checkpoints()
+        self.assertEqual([cp["id"] for cp in checkpoints], [first["id"], second["id"]])
+        self.assertEqual(checkpoints[-1]["length"], 2)
+
+
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.engine = AttestationEngine(self.db_path)
+        self.engine.attest("charter-plan", "a", [], 0.9, actor="alice")
+        self.engine.attest("charter-review", "b", [], 0.5, actor="bob")  # held
+        self.engine.attest("deploy-step", "c", [], 0.95, actor="alice")
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_no_filters_returns_everything(self):
+        self.assertEqual(len(self.engine.search()), 3)
+
+    def test_filter_by_status(self):
+        held = self.engine.search(status="held")
+        self.assertEqual(len(held), 1)
+        self.assertEqual(held[0]["subject"], "charter-review")
+
+    def test_filter_by_actor_and_confidence_range(self):
+        result = self.engine.search(actor="alice", min_confidence=0.92)
+        self.assertEqual([a["subject"] for a in result], ["deploy-step"])
+
+    def test_filter_by_subject_substring(self):
+        result = self.engine.search(subject_contains="charter")
+        self.assertEqual(len(result), 2)
+
+    def test_limit_caps_results(self):
+        self.assertEqual(len(self.engine.search(limit=2)), 2)
+
+    def test_since_filters_by_timestamp(self):
+        # a future timestamp excludes everything; the epoch includes all
+        self.assertEqual(self.engine.search(since="2999-01-01T00:00:00+00:00"), [])
+        self.assertEqual(len(self.engine.search(since="1970-01-01T00:00:00+00:00")), 3)
+
+    def test_filters_are_parameterized_against_injection(self):
+        # a SQL metacharacter payload is treated as a literal subject, not code
+        result = self.engine.search(subject_contains="'; DROP TABLE attestations;--")
+        self.assertEqual(result, [])
+        self.assertEqual(len(self.engine.search()), 3)  # table intact
+
+
+class AutoCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_seals_automatically_once_the_cadence_is_reached(self):
+        engine = AttestationEngine(self.db_path, signing_key="k", checkpoint_every=2)
+        engine.attest("a", "one", [], 0.9)
+        self.assertEqual(len(engine.list_checkpoints()), 0)  # not yet
+        engine.attest("b", "two", [], 0.9)
+        self.assertEqual(len(engine.list_checkpoints()), 1)  # sealed at 2
+        self.assertTrue(engine.verify()["trustworthy"])
+
+    def test_keeps_sealing_on_each_cadence_boundary(self):
+        engine = AttestationEngine(self.db_path, signing_key="k", checkpoint_every=2)
+        for i in range(4):
+            engine.attest(f"s{i}", f"c{i}", [], 0.9)
+        checkpoints = engine.list_checkpoints()
+        self.assertEqual(len(checkpoints), 2)
+        self.assertEqual([cp["length"] for cp in checkpoints], [2, 4])
+
+    def test_disabled_by_default(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")  # every=0
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        self.assertEqual(len(engine.list_checkpoints()), 0)
+        self.assertFalse(engine.checkpoint_policy["auto"])
+
+    def test_no_auto_seal_without_a_key(self):
+        engine = AttestationEngine(self.db_path, signing_key="", checkpoint_every=2)
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        self.assertEqual(len(engine.list_checkpoints()), 0)
+        self.assertFalse(engine.checkpoint_policy["auto"])
+
+    def test_policy_reports_the_cadence(self):
+        engine = AttestationEngine(self.db_path, signing_key="k", checkpoint_every=5)
+        policy = engine.checkpoint_policy
+        self.assertTrue(policy["auto"])
+        self.assertEqual(policy["every"], 5)
+        self.assertTrue(policy["can_sign"])
+
+
+class ExportTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_export_carries_the_whole_sealed_record(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("a", "one", ["plan"], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        engine.checkpoint()
+        bundle = engine.export()
+        self.assertEqual(bundle["version"], 1)
+        self.assertEqual(bundle["genesis"], GENESIS_HASH)
+        self.assertIn("exported_at", bundle)
+        self.assertEqual(len(bundle["attestations"]), 2)
+        self.assertEqual(len(bundle["checkpoints"]), 1)
+        self.assertEqual(bundle["attestations"][0]["sources"], ["plan"])
+
+    def test_export_of_an_empty_ledger_is_well_formed(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        bundle = engine.export()
+        self.assertEqual(bundle["attestations"], [])
+        self.assertEqual(bundle["checkpoints"], [])
+
+
+class CheckpointSignatureTests(unittest.TestCase):
+    def test_signature_is_deterministic_and_sensitive_to_key_head_and_length(self):
+        base = checkpoint_signature("key", "abc", 3)
+        self.assertEqual(base, checkpoint_signature("key", "abc", 3))
+        self.assertNotEqual(base, checkpoint_signature("other-key", "abc", 3))
+        self.assertNotEqual(base, checkpoint_signature("key", "abcd", 3))
+        self.assertNotEqual(base, checkpoint_signature("key", "abc", 4))
+
+
+class LinkHashTests(unittest.TestCase):
+    def test_link_hash_is_deterministic_and_prev_sensitive(self):
+        entry = {
+            "subject": "a", "actor": "alice", "sha256": "x", "confidence": 0.9,
+            "threshold": CONFIDENCE_THRESHOLD, "status": "attested",
+            "sources": [], "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        self.assertEqual(link_hash(GENESIS_HASH, entry), link_hash(GENESIS_HASH, entry))
+        self.assertNotEqual(link_hash(GENESIS_HASH, entry), link_hash("deadbeef", entry))
 
 
 if __name__ == "__main__":

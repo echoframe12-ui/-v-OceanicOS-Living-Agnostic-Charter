@@ -207,6 +207,318 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(len(payload["verdicts"]), len(payload["adapters"]))
         self.assertIn(payload["majority"], ("approve", "revise"))
         self.assertTrue(payload["dissent"])
+        # the rules engine sits on the panel as the deterministic anchor
+        self.assertIn("rules-engine", payload["adapters"])
+
+    def test_attestations_filtering(self):
+        engine = app_module.attestation_engine
+        engine.attest("filter-attested", "x", [], 0.9, actor="filter-user")
+        engine.attest("filter-held", "y", [], 0.5, actor="filter-user")
+
+        held = self.client.get("/attestations?status=held&actor=filter-user").get_json()
+        self.assertTrue(held)
+        self.assertTrue(all(a["status"] == "held" for a in held))
+
+        subject = self.client.get("/attestations?subject=filter-attested").get_json()
+        self.assertEqual([a["subject"] for a in subject], ["filter-attested"])
+
+        limited = self.client.get("/attestations?limit=1").get_json()
+        self.assertEqual(len(limited), 1)
+
+        # validation
+        self.assertEqual(self.client.get("/attestations?status=bogus").status_code, 400)
+        self.assertEqual(
+            self.client.get("/attestations?min_confidence=high").status_code, 400
+        )
+
+    def test_readyz_reports_ready(self):
+        resp = self.client.get("/readyz")
+        self.assertEqual(resp.status_code, 200)
+        report = resp.get_json()
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["checks"]["db"])
+        self.assertTrue(report["checks"]["workspace"])
+        self.assertIn("chain_intact", report)
+
+    def test_openapi_endpoint_describes_the_live_api(self):
+        resp = self.client.get("/openapi.json")
+        self.assertEqual(resp.status_code, 200)
+        spec = resp.get_json()
+        self.assertEqual(spec["openapi"], "3.0.3")
+        self.assertIn("/metrics", spec["paths"])
+        self.assertIn("/openapi.json", spec["paths"])  # it documents itself too
+
+    def test_cvi_history_records_on_build_and_matches_cvi(self):
+        before = len(self.client.get("/cvi/history").get_json())
+        self.client.post(
+            "/builder/run",
+            data=json.dumps({"task": "trend build", "context": "c"}),
+            content_type="application/json",
+        )
+        series = self.client.get("/cvi/history").get_json()
+        self.assertGreater(len(series), before)
+        # the latest point equals the current CVI
+        current = self.client.get("/cvi").get_json()["cvi"]
+        self.assertEqual(series[-1]["cvi"], current)
+
+    def test_cvi_history_limit_and_validation(self):
+        limited = self.client.get("/cvi/history?limit=1").get_json()
+        self.assertLessEqual(len(limited), 1)
+        self.assertEqual(self.client.get("/cvi/history?limit=nope").status_code, 400)
+
+    def test_metrics_endpoint_exposes_prometheus_text(self):
+        resp = self.client.get("/metrics")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/plain", resp.content_type)
+        body = resp.get_data(as_text=True)
+        # standard exposition shape and a few known series
+        self.assertIn("# HELP oceanicos_cvi", body)
+        self.assertIn("# TYPE oceanicos_cvi gauge", body)
+        self.assertIn("oceanicos_chain_intact 1", body)
+        self.assertIn("oceanicos_attestations_total", body)
+
+    def test_rules_evaluate_endpoint_explains_itself(self):
+        response = self.client.post(
+            "/rules/evaluate",
+            data=json.dumps({"prompt": "build everything"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["verdict"], "revise")
+        self.assertIn("unbounded_scope", payload["fired"])
+        self.assertTrue(payload["reasons"])  # the reason travels with the verdict
+
+    def test_held_review_workflow_releases_and_lifts_cvi(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("held-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "held-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "held-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            # a held attestation (below the 0.74 threshold)
+            held = engine.attest("held-subject", "content", [], 0.5, actor="held-member")
+            self.assertEqual(held["status"], "held")
+
+            auth = {"Authorization": f"Bearer {admin}"}
+
+            # it shows up pending in the steward's held queue
+            queue = self.client.get("/attestations/held", headers=auth).get_json()
+            entry = next(a for a in queue if a["id"] == held["id"])
+            self.assertEqual(entry["review_status"], "pending")
+
+            # a non-admin cannot review
+            forbidden = self.client.post(
+                f"/attestations/{held['id']}/review",
+                data=json.dumps({"verdict": "release", "reason": "ok"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {member}"},
+            )
+            self.assertEqual(forbidden.status_code, 403)
+
+            # validation: bad verdict and empty reason are rejected
+            self.assertEqual(
+                self.client.post(
+                    f"/attestations/{held['id']}/review",
+                    data=json.dumps({"verdict": "nope", "reason": "x"}),
+                    content_type="application/json",
+                    headers=auth,
+                ).status_code,
+                400,
+            )
+            self.assertEqual(
+                self.client.post(
+                    f"/attestations/{held['id']}/review",
+                    data=json.dumps({"verdict": "release", "reason": "  "}),
+                    content_type="application/json",
+                    headers=auth,
+                ).status_code,
+                400,
+            )
+
+            # missing id -> 404
+            self.assertEqual(
+                self.client.post(
+                    "/attestations/999999/review",
+                    data=json.dumps({"verdict": "release", "reason": "x"}),
+                    content_type="application/json",
+                    headers=auth,
+                ).status_code,
+                404,
+            )
+
+            cvi_before = self.client.get("/cvi").get_json()["cvi"]
+
+            # release it, on the record with a reason
+            released = self.client.post(
+                f"/attestations/{held['id']}/review",
+                data=json.dumps({"verdict": "release", "reason": "evidence re-checked"}),
+                content_type="application/json",
+                headers=auth,
+            )
+            self.assertEqual(released.status_code, 200)
+
+            # the trail reads back, the queue shows released, and CVI rises
+            trail = self.client.get(f"/attestations/{held['id']}/reviews").get_json()
+            self.assertEqual(trail[-1]["verdict"], "release")
+            queue = self.client.get("/attestations/held", headers=auth).get_json()
+            entry = next(a for a in queue if a["id"] == held["id"])
+            self.assertEqual(entry["review_status"], "released")
+            self.assertGreater(self.client.get("/cvi").get_json()["cvi"], cvi_before)
+
+            # the chain is untouched — reviews live in their own table
+            self.assertTrue(self.client.get("/attestations/verify").get_json()["intact"])
+        finally:
+            app_module.auth_registry.admin_users.discard("held-steward")
+
+    def test_held_queue_and_overview_carry_sla_aging(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("sla-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "sla-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            auth = {"Authorization": f"Bearer {admin}"}
+            held = engine.attest("sla-subject", "content", [], 0.5)
+            self.assertEqual(held["status"], "held")
+
+            queue = self.client.get("/attestations/held", headers=auth).get_json()
+            entry = next(a for a in queue if a["id"] == held["id"])
+            self.assertEqual(entry["sla"]["state"], "pending")
+            self.assertIn("age_seconds", entry["sla"])
+            self.assertIn("sla_breached", entry["sla"])
+
+            overview = self.client.get("/admin/overview", headers=auth).get_json()
+            self.assertIn("held_sla_breached", overview)
+            self.assertIn("held_sla_seconds", overview)
+        finally:
+            app_module.auth_registry.admin_users.discard("sla-steward")
+
+    def test_reviewing_a_non_held_attestation_conflicts(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("conflict-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "conflict-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            passed = engine.attest("attested", "content", [], 0.95)  # not held
+            resp = self.client.post(
+                f"/attestations/{passed['id']}/review",
+                data=json.dumps({"verdict": "release", "reason": "n/a"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            self.assertEqual(resp.status_code, 409)
+        finally:
+            app_module.auth_registry.admin_users.discard("conflict-steward")
+
+    def test_attestations_verify_endpoint_reports_an_intact_chain(self):
+        verify = self.client.get("/attestations/verify")
+        self.assertEqual(verify.status_code, 200)
+        report = verify.get_json()
+        self.assertIn("intact", report)
+        self.assertTrue(report["intact"])
+        self.assertIsNone(report["broken_at"])
+
+    def test_checkpoint_endpoint_seals_and_verify_reflects_it(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("chain-steward")
+        original_key = engine._signing_key
+        engine._signing_key = "test-signing-key"
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "chain-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "chain-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            # sealing the chain is an admin-only act
+            forbidden = self.client.post(
+                "/attestations/checkpoint",
+                headers={"Authorization": f"Bearer {member}"},
+            )
+            self.assertEqual(forbidden.status_code, 403)
+
+            sealed = self.client.post(
+                "/attestations/checkpoint",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            self.assertEqual(sealed.status_code, 200)
+            self.assertIn("signature", sealed.get_json())
+
+            report = self.client.get("/attestations/verify").get_json()
+            self.assertTrue(report["checkpointed"])
+            self.assertTrue(report["checkpoint"]["signature_valid"])
+            self.assertTrue(report["trustworthy"])
+        finally:
+            engine._signing_key = original_key
+            app_module.auth_registry.admin_users.discard("chain-steward")
+
+    def test_checkpoint_without_a_key_is_unavailable(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("keyless-steward")
+        original_key = engine._signing_key
+        engine._signing_key = ""
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "keyless-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            resp = self.client.post(
+                "/attestations/checkpoint",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            self.assertEqual(resp.status_code, 503)
+        finally:
+            engine._signing_key = original_key
+            app_module.auth_registry.admin_users.discard("keyless-steward")
+
+    def test_anchor_endpoint_surfaces_the_failover(self):
+        resp = self.client.get("/anchor")
+        self.assertEqual(resp.status_code, 200)
+        state = resp.get_json()
+        self.assertTrue(state["present"])
+        self.assertTrue(state["integrity_ok"])
+        # a dated lookup answers straight from the anchor
+        dated = self.client.get("/anchor?date=2019-07-04").get_json()
+        self.assertIn("2019-07-04", dated["lookup"]["row"])
+
+    def test_observer_reports_manifest_and_anchor(self):
+        obs = self.client.get("/observer").get_json()
+        self.assertIsNotNone(obs["manifest_sha256"])
+        self.assertTrue(obs["anchor_present"])
+        self.assertEqual(obs["sigil"], "0xΩ∞v")
+        self.assertEqual(
+            obs["identity"],
+            ["/", "Ω∞v Compiler", "OceanicOS", "Living Agnostic Charter"],
+        )
+
+    def test_attestations_export_returns_a_portable_bundle(self):
+        export = self.client.get("/attestations/export")
+        self.assertEqual(export.status_code, 200)
+        self.assertIn("application/json", export.content_type)
+        bundle = export.get_json()
+        self.assertEqual(bundle["version"], 1)
+        self.assertIn("attestations", bundle)
+        self.assertIn("checkpoints", bundle)
 
     def test_vaas_endpoints(self):
         cvi = self.client.get("/cvi")
@@ -370,6 +682,10 @@ class OceanicOSAppTests(unittest.TestCase):
                 headers=auth,
             )
             self.assertEqual(first.status_code, 200)
+            # a successful build carries standard rate-limit headers, remaining
+            # reflecting the slot just consumed (limit 1 -> 0 left)
+            self.assertEqual(first.headers.get("X-RateLimit-Limit"), "1")
+            self.assertEqual(first.headers.get("X-RateLimit-Remaining"), "0")
 
             blocked = self.client.post(
                 "/builder/run",
@@ -383,6 +699,33 @@ class OceanicOSAppTests(unittest.TestCase):
             self.assertEqual(body["tier"], "attestor")
             self.assertEqual(body["window_seconds"], quotas.WINDOW_SECONDS)
             self.assertIsNotNone(body["resets_at"])
+            # the 429 tells the client when to come back
+            self.assertEqual(blocked.headers.get("X-RateLimit-Remaining"), "0")
+            self.assertIsNotNone(blocked.headers.get("Retry-After"))
+            self.assertGreaterEqual(int(blocked.headers["Retry-After"]), 0)
+
+    def test_unlimited_tier_emits_no_rate_limit_headers(self):
+        app_module.auth_registry.admin_users.add("sov-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register", data=json.dumps({"username": "sov-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            sov = self.client.post(
+                "/auth/register", data=json.dumps({"username": "sov-user"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            # promote the existing user; the token is unchanged by a tier change
+            self.client.post(
+                "/admin/users/sov-user/tier", data=json.dumps({"tier": "sovereign"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            resp = self.client.get("/me/quota", headers={"Authorization": f"Bearer {sov}"})
+            self.assertIsNone(resp.get_json()["limit"])  # unlimited
+            self.assertIsNone(resp.headers.get("X-RateLimit-Limit"))  # no ceiling to report
+        finally:
+            app_module.auth_registry.admin_users.discard("sov-steward")
 
     def test_admin_can_promote_a_users_tier(self):
         app_module.auth_registry.admin_users.add("tier-steward")

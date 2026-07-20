@@ -1,5 +1,11 @@
 # API and Plugin Specification
 
+> **The authoritative, always-current API surface is `GET /openapi.json`** — a
+> valid OpenAPI 3 document generated from the live route table (see
+> [DECISIONS/0025](DECISIONS/0025-self-describing-api.md)). It cannot drift from
+> the code because it is derived from it. This prose is the conceptual overview;
+> the generated spec is the complete, current endpoint list.
+
 OceanicOS should expose a simple, extensible interface for orchestration, memory, and tool integration.
 
 ## Core API Endpoints

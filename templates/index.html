@@ -4,136 +4,50 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="/static/brand/oceanicos-badge.png" />
-    <title>Ω∞v OceanicOS Verification Terminal</title>
+    <title>Ω∞v OceanicOS Verification Console</title>
     <style>
-      * {
-        border-radius: 0 !important;
-        box-sizing: border-box;
-      }
+      * { border-radius: 0 !important; box-sizing: border-box; }
       #boot-splash {
-        position: fixed;
-        inset: 0;
-        z-index: 9999;
-        background: #000;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 1rem;
-        animation: boot 2.4s ease-in forwards;
+        position: fixed; inset: 0; z-index: 9999; background: #000;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 1rem; animation: boot 2.4s ease-in forwards;
       }
-      #boot-splash img {
-        width: min(60vw, 340px);
-        object-fit: contain;
-      }
-      #boot-splash .tag {
-        font-family: "IBM Plex Mono", "Courier New", monospace;
-        color: #7fbf9f;
-        letter-spacing: 0.35em;
-        text-transform: uppercase;
-        font-size: 0.72rem;
-      }
-      #boot-splash .checksum {
-        font-family: "IBM Plex Mono", "Courier New", monospace;
-        color: #555;
-        letter-spacing: 0.2em;
-        font-size: 0.68rem;
-      }
-      @keyframes boot {
-        0%, 70% { opacity: 1; }
-        100% { opacity: 0; visibility: hidden; }
-      }
-      body {
-        font-family: "IBM Plex Mono", "Courier New", monospace;
-        margin: 0;
-        padding: 1.5rem;
-        background: #0a0a0a;
-        color: #e6e6e6;
-        line-height: 1.45;
-        font-size: 14px;
-      }
-      h1 {
-        font-size: 1.1rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        border-bottom: 1px solid #e6e6e6;
-        padding-bottom: 0.5rem;
-      }
-      h2 {
-        font-size: 0.85rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: #999;
-        margin: 0 0 0.75rem 0;
-      }
-      .mantra {
-        color: #999;
-        font-size: 0.8rem;
-        letter-spacing: 0.05em;
-      }
-      .cursor {
-        display: inline-block;
-        width: 0.6em;
-        height: 1em;
-        background: #e6e6e6;
-        vertical-align: text-bottom;
-        animation: blink 1.06s steps(1) infinite;
-      }
-      @keyframes blink {
-        50% { opacity: 0; }
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-        gap: 1rem;
-        align-items: start;
-      }
-      .panel {
-        background: #000;
-        border: 1px solid #333;
-        padding: 1rem;
-        margin-bottom: 1rem;
-      }
+      #boot-splash img { width: min(60vw, 340px); object-fit: contain; }
+      #boot-splash .tag { font-family: "IBM Plex Mono", "Courier New", monospace; color: #7fbf9f; letter-spacing: 0.35em; text-transform: uppercase; font-size: 0.72rem; }
+      #boot-splash .checksum { font-family: "IBM Plex Mono", "Courier New", monospace; color: #555; letter-spacing: 0.2em; font-size: 0.68rem; }
+      @keyframes boot { 0%, 70% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+      body { font-family: "IBM Plex Mono", "Courier New", monospace; margin: 0; padding: 1.5rem; background: #0a0a0a; color: #e6e6e6; line-height: 1.45; font-size: 14px; }
+      h1 { font-size: 1.1rem; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 1px solid #e6e6e6; padding-bottom: 0.5rem; }
+      h2 { font-size: 0.82rem; letter-spacing: 0.1em; text-transform: uppercase; color: #999; margin: 0 0 0.75rem 0; }
+      .mantra { color: #999; font-size: 0.8rem; letter-spacing: 0.05em; }
+      .cursor { display: inline-block; width: 0.6em; height: 1em; background: #e6e6e6; vertical-align: text-bottom; animation: blink 1.06s steps(1) infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+      .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+      .tile { background: #000; border: 1px solid #333; padding: 0.75rem; }
+      .tile .k { color: #777; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.12em; }
+      .tile .v { font-size: 1.5rem; margin-top: 0.25rem; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1rem; align-items: start; }
+      .panel { background: #000; border: 1px solid #333; padding: 1rem; margin-bottom: 1rem; }
       form { display: grid; gap: 0.6rem; }
-      label { color: #999; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; }
-      input, textarea, button {
-        font: inherit;
-        padding: 0.55rem;
-        background: #0a0a0a;
-        color: #e6e6e6;
-        border: 1px solid #444;
-      }
-      button {
-        background: #e6e6e6;
-        color: #000;
-        border: 1px solid #e6e6e6;
-        cursor: pointer;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        font-size: 0.8rem;
-      }
+      .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      .row > * { flex: 1; min-width: 0; }
+      label { color: #999; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; }
+      input, textarea, select, button { font: inherit; padding: 0.5rem; background: #0a0a0a; color: #e6e6e6; border: 1px solid #444; }
+      button { background: #e6e6e6; color: #000; border: 1px solid #e6e6e6; cursor: pointer; text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.76rem; }
+      button.ghost { background: #0a0a0a; color: #e6e6e6; }
       button:disabled { background: #333; color: #777; border-color: #333; cursor: wait; }
-      pre {
-        background: #000;
-        color: #cfcfcf;
-        padding: 0.75rem;
-        border: 1px solid #222;
-        overflow-x: auto;
-        max-height: 22rem;
-        font-size: 0.78rem;
-        white-space: pre-wrap;
-        word-break: break-all;
-      }
-      table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-      th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #222; }
-      th { color: #999; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.08em; }
-      .attest-hash { color: #7fbf7f; }
-      .attest-held { color: #bf7f7f; }
-      .dissent-true { color: #bf7f7f; font-weight: bold; }
-      .dissent-false { color: #7fbf7f; }
+      pre { background: #000; color: #cfcfcf; padding: 0.75rem; border: 1px solid #222; overflow-x: auto; max-height: 20rem; font-size: 0.74rem; white-space: pre-wrap; word-break: break-all; }
+      table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+      th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #222; vertical-align: top; }
+      th { color: #999; text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.08em; }
+      .ok { color: #7fbf7f; } .bad { color: #bf7f7f; } .dim { color: #777; }
+      .attest-hash { color: #7fbf7f; } .attest-held { color: #bf7f7f; }
+      .badge { display: inline-block; padding: 0 0.4rem; border: 1px solid #444; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; }
       .computing { color: #999; }
       a { color: #e6e6e6; }
+      .lineage { color: #7fbf9f; white-space: pre; font-size: 0.8rem; }
       .footer { color: #555; font-size: 0.7rem; margin-top: 1rem; border-top: 1px solid #222; padding-top: 0.5rem; }
+      .hint { color: #777; font-size: 0.68rem; }
     </style>
   </head>
   <body>
@@ -143,69 +57,132 @@
       <div class="checksum">checksum 0xΩ∞v · observer online</div>
     </div>
 
-    <h1>Ω∞v OceanicOS Verification Terminal<span class="cursor"></span></h1>
-    <p class="mantra">I don't generate; I attest. Certainty is a bug. Outputs carry hashes, confidence, and source trails — never a single "final" answer.</p>
+    <h1>Ω∞v OceanicOS Verification Console<span class="cursor"></span></h1>
+    <p class="mantra">I don't generate; I attest. Certainty is a bug. Outputs carry hashes, confidence, and source trails — never a single "final" answer. Automate the double-check. Charge for the squint.</p>
+
+    <div class="tiles" id="tiles"></div>
 
     <div class="grid">
       <div>
+        <div class="panel">
+          <h2>Identity // Observer</h2>
+          <div class="lineage" id="lineage">loading lineage…</div>
+          <div id="observer" class="hint" style="margin-top:0.6rem">probing root…</div>
+        </div>
+
+        <div class="panel">
+          <h2>Session // Identify</h2>
+          <form id="session-form">
+            <div class="row">
+              <input id="username" placeholder="username (in OCEANICOS_ADMIN_USERS for steward powers)" value="root" />
+              <button type="submit" style="flex:0 0 auto">Identify</button>
+            </div>
+          </form>
+          <div id="session" class="hint">anonymous — public reads only. Admin actions (checkpoint, held-review) need a steward token.</div>
+        </div>
+
         <div class="panel">
           <h2>Build // Attest</h2>
           <form id="builder-form">
             <label for="task">Task</label>
             <input id="task" name="task" value="Draft a charter update" required />
-            <label for="context">Context (omitting it drops confidence below threshold — the build will be held)</label>
+            <label for="context">Context (omit it → confidence drops below 0.74 → held)</label>
             <textarea id="context" name="context" rows="2">Governance update for the living charter.</textarea>
             <button type="submit" id="run-button">Run + Attest</button>
           </form>
+          <div id="attestation" style="margin-top:0.75rem">no attestation issued.</div>
         </div>
 
         <div class="panel">
-          <h2>Consensus // Dissent</h2>
+          <h2>Consensus // Dissent (3 models + rules engine)</h2>
           <form id="consensus-form">
-            <label for="prompt">Prompt (all matching adapters run; disagreement is the primary output)</label>
+            <label for="prompt">Prompt — every panel member votes; disagreement is the output</label>
             <input id="prompt" name="prompt" value="Plan the charter build" required />
-            <button type="submit" id="consensus-button">Query All Adapters</button>
+            <button type="submit" id="consensus-button">Convene Panel</button>
           </form>
-          <pre id="consensus-output">awaiting query…</pre>
+          <div id="consensus-output" style="margin-top:0.75rem">awaiting query…</div>
         </div>
 
         <div class="panel">
-          <h2>System</h2>
-          <div id="health">probing…</div>
-          <p><a href="/builds/export">⇩ export ledger (csv) — graceful degradation into a spreadsheet</a></p>
-        </div>
-
-        <div class="panel">
-          <h2>Run History</h2>
-          <div id="history">no runs on record.</div>
+          <h2>Rules // Evaluate (explainable)</h2>
+          <form id="rules-form">
+            <div class="row">
+              <input id="rules-prompt" value="build everything" required />
+              <button type="submit" style="flex:0 0 auto">Evaluate</button>
+            </div>
+          </form>
+          <div id="rules-output" class="hint" style="margin-top:0.5rem">the one panel member that names its reasons.</div>
         </div>
       </div>
 
       <div>
         <div class="panel">
-          <h2>Attestation</h2>
-          <div id="attestation">no attestation issued.</div>
+          <h2>Integrity // CVI · Chain · Checkpoint</h2>
+          <div id="integrity">verifying…</div>
+          <div class="row" style="margin-top:0.6rem">
+            <button class="ghost" id="verify-button" style="flex:0 0 auto">Re-verify Chain</button>
+            <button class="ghost" id="checkpoint-button" style="flex:0 0 auto">Seal Checkpoint (admin)</button>
+          </div>
+          <div id="checkpoint-msg" class="hint" style="margin-top:0.4rem"></div>
         </div>
 
         <div class="panel">
-          <h2>Raw Output</h2>
-          <pre id="result">{}</pre>
+          <h2>Ledger // Search</h2>
+          <form id="search-form">
+            <div class="row">
+              <select id="f-status"><option value="">any status</option><option value="attested">attested</option><option value="held">held</option></select>
+              <input id="f-subject" placeholder="subject contains…" />
+              <input id="f-min" placeholder="min conf" style="max-width:6rem" />
+              <input id="f-limit" placeholder="limit" style="max-width:5rem" />
+              <button type="submit" style="flex:0 0 auto">Search</button>
+            </div>
+          </form>
+          <div id="ledger" style="margin-top:0.6rem">no query yet.</div>
+        </div>
+
+        <div class="panel">
+          <h2>Held Review // Steward SLA</h2>
+          <div id="held-queue">identify as a steward to load the queue.</div>
+        </div>
+
+        <div class="panel">
+          <h2>Anchor of Last Resort (2019)</h2>
+          <form id="anchor-form">
+            <div class="row">
+              <input id="anchor-date" value="2019-07-04" />
+              <button type="submit" style="flex:0 0 auto">Look Up Offline</button>
+            </div>
+          </form>
+          <div id="anchor-output" class="hint" style="margin-top:0.5rem">the last thing still true when everything else is ephemeral.</div>
+        </div>
+
+        <div class="panel">
+          <h2>Metrics // Prometheus</h2>
+          <pre id="metrics">scraping /metrics…</pre>
+        </div>
+
+        <div class="panel">
+          <h2>Pricing // VaaS</h2>
+          <div id="pricing">loading tiers…</div>
+          <p class="hint" style="margin-top:0.5rem"><a href="/builds/export">⇩ csv</a> · <a href="/attestations/export">⇩ signed bundle</a> · <a href="/metrics">/metrics</a> · <a href="/openapi.json">/openapi.json</a> — the ground truth survives the system.</p>
         </div>
       </div>
     </div>
 
-    <p class="footer">render delay: 4000ms (deliberate — computational cost made visible) · threshold: 0.74 · checksum 0xΩ∞v · exit 0 (continues…) · 🧠 ⛓️ 🌊</p>
+    <p class="footer">render delay: 2500ms (deliberate — computational cost made visible) · threshold: 0.74 · checksum 0xΩ∞v · exit 0 (continues…) · 🧠 ⛓️ 🌊</p>
 
     <script>
-      const RENDER_DELAY_MS = 4000;
+      const RENDER_DELAY_MS = 2500;
+      let authToken = null;
+      const $ = (id) => document.getElementById(id);
+      const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+      const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const authHeaders = (extra = {}) => authToken ? { ...extra, Authorization: `Bearer ${authToken}` } : extra;
 
-      function delay(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-      }
-
-      async function fetchJson(url, options) {
-        const response = await fetch(url, options);
-        return response.json();
+      async function fetchJson(url, options = {}) {
+        const res = await fetch(url, options);
+        const data = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, data };
       }
 
       async function withFriction(button, statusEl, work) {
@@ -218,92 +195,203 @@
         try {
           const [data] = await Promise.all([work(), delay(RENDER_DELAY_MS)]);
           return data;
-        } finally {
-          clearInterval(tick);
-          statusEl.className = '';
-          button.disabled = false;
-        }
+        } finally { clearInterval(tick); statusEl.className = ''; button.disabled = false; }
       }
 
-      async function loadHealth() {
-        const data = await fetchJson('/health');
-        document.getElementById('health').textContent = JSON.stringify(data);
+      // ---- dashboard tiles from /metrics (public) ----
+      function parseMetrics(text) {
+        const out = {};
+        text.split('\n').forEach((line) => {
+          if (line.startsWith('#') || !line.trim()) return;
+          const [name, value] = line.split(' ');
+          out[name] = value;
+        });
+        return out;
+      }
+      async function loadTiles() {
+        const res = await fetch('/metrics');
+        const text = await res.text();
+        $('metrics').textContent = text;
+        const m = parseMetrics(text);
+        const tiles = [
+          ['CVI', m.oceanicos_cvi ?? '—'],
+          ['Chain', m.oceanicos_chain_intact === '1' ? 'INTACT' : 'BROKEN'],
+          ['Attestations', m.oceanicos_attestations_total ?? '—'],
+          ['Held pending', m.oceanicos_held_pending ?? '—'],
+          ['SLA breached', m.oceanicos_held_sla_breached ?? '—'],
+          ['Panel', m.oceanicos_model_adapters ?? '—'],
+        ];
+        $('tiles').innerHTML = tiles.map(([k, v]) => {
+          const cls = k === 'Chain' ? (v === 'INTACT' ? 'ok' : 'bad') : (k === 'SLA breached' && v !== '0' ? 'bad' : '');
+          return `<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${esc(v)}</div></div>`;
+        }).join('');
       }
 
-      async function loadHistory() {
-        const data = await fetchJson('/builder/history');
-        const target = document.getElementById('history');
-        if (!data || data.length === 0) {
-          target.textContent = 'no runs on record.';
-          return;
-        }
-        const rows = data
-          .map(
-            (run) =>
-              `<tr><td>${run.run_id}</td><td>${run.task}</td><td>${run.confidence.toFixed(2)}</td><td class="${run.attestation === 'held' ? 'attest-held' : 'attest-hash'}">${run.attestation}</td></tr>`
-          )
-          .join('');
-        target.innerHTML = `<table><thead><tr><th>#</th><th>Task</th><th>Conf</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+      async function loadObserver() {
+        const { data } = await fetchJson('/observer');
+        $('lineage').textContent = (data.identity || []).map((n, i) => i === 0 ? n : '  '.repeat(i - 1) + '└── ' + n).join('\n');
+        $('observer').innerHTML = `root <span class="ok">${esc(data.root)}</span> · sigil ${esc(data.sigil)} · stateless ${data.stateless}
+          · manifest <span class="dim">${esc((data.manifest_sha256 || '').slice(0, 16))}…</span> · anchor ${data.anchor_present ? '<span class="ok">present</span>' : '<span class="bad">absent</span>'} · exit ${data.exit}`;
+      }
+
+      function sparkline(values) {
+        if (!values.length) return '<span class="dim">— no history yet</span>';
+        const blocks = '▁▂▃▄▅▆▇█';
+        // CVI is bounded 0–1, so scale against that fixed range, not the sample min/max
+        return values.map((v) => blocks[Math.min(7, Math.max(0, Math.round(v * 7)))]).join('');
+      }
+
+      async function loadIntegrity() {
+        const [{ data: cvi }, { data: chain }, { data: history }] = await Promise.all([
+          fetchJson('/cvi'), fetchJson('/attestations/verify'), fetchJson('/cvi/history?limit=40'),
+        ]);
+        const trust = chain.trustworthy ? '<span class="ok">TRUSTWORTHY</span>' : (chain.checkpointed ? '<span class="bad">unsigned/mismatch</span>' : '<span class="dim">unsealed</span>');
+        const trend = (history || []).map((p) => p.cvi);
+        $('integrity').innerHTML = `
+          <table>
+            <tr><th>CVI</th><td>${cvi.cvi} <span class="dim">(mean ${cvi.mean_confidence}, held ${cvi.held_ratio}, n=${cvi.samples})</span></td></tr>
+            <tr><th>trend</th><td><span class="ok" style="letter-spacing:1px">${sparkline(trend)}</span> <span class="dim">${trend.length} pts</span></td></tr>
+            <tr><th>chain</th><td class="${chain.intact ? 'ok' : 'bad'}">${chain.intact ? 'INTACT' : 'BROKEN @ ' + chain.broken_at} · length ${chain.length}</td></tr>
+            <tr><th>checkpoint</th><td>${trust}</td></tr>
+          </table>`;
       }
 
       function renderAttestation(att) {
         const held = att.status === 'held';
-        document.getElementById('attestation').innerHTML = `
-          <table>
-            <tr><th>subject</th><td>${att.subject}</td></tr>
-            <tr><th>sha256</th><td class="attest-hash">${att.sha256}</td></tr>
-            <tr><th>confidence</th><td>${att.confidence.toFixed(2)} / threshold ${att.threshold}</td></tr>
-            <tr><th>status</th><td class="${held ? 'attest-held' : 'attest-hash'}">${att.status.toUpperCase()}${held ? ' — human review required; nothing auto-approved' : ''}</td></tr>
-            <tr><th>source trail</th><td>${att.sources.join(' → ')}</td></tr>
-          </table>`;
+        $('attestation').innerHTML = `<table>
+          <tr><th>subject</th><td>${esc(att.subject)}</td></tr>
+          <tr><th>sha256</th><td class="attest-hash">${esc(att.sha256)}</td></tr>
+          <tr><th>confidence</th><td>${att.confidence.toFixed(2)} / threshold ${att.threshold}</td></tr>
+          <tr><th>status</th><td class="${held ? 'attest-held' : 'attest-hash'}">${att.status.toUpperCase()}${held ? ' — held for review; nothing auto-approved' : ''}</td></tr>
+          <tr><th>source trail</th><td>${att.sources.map(esc).join(' → ')}</td></tr>
+        </table>`;
       }
 
-      document.getElementById('builder-form').addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const resultEl = document.getElementById('result');
+      // ---- session ----
+      $('session-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const { ok, data } = await fetchJson('/auth/register', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: $('username').value }),
+        });
+        if (!ok) { $('session').textContent = 'identify failed'; return; }
+        authToken = data.token;
+        const who = await fetchJson('/auth/whoami', { headers: authHeaders() });
+        $('session').innerHTML = `identified as <span class="ok">${esc(who.data.actor)}</span> · role <span class="badge">${esc(who.data.role)}</span> · tier <span class="badge">${esc(who.data.tier)}</span>`;
+        loadHeldQueue();
+      });
+
+      // ---- build ----
+      $('builder-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.currentTarget;
         const payload = { task: form.task.value };
         if (form.context.value.trim()) payload.context = form.context.value;
-        const data = await withFriction(
-          document.getElementById('run-button'),
-          resultEl,
-          () => fetchJson('/builder/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          })
-        );
-        renderAttestation(data.attestation);
-        resultEl.textContent = JSON.stringify(data, null, 2);
-        await Promise.all([loadHealth(), loadHistory()]);
+        const result = await withFriction($('run-button'), $('attestation'),
+          () => fetchJson('/builder/run', { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(payload) }).then((r) => r.data));
+        if (result && result.attestation) renderAttestation(result.attestation);
+        refreshDashboard();
       });
 
-      document.getElementById('consensus-form').addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const outputEl = document.getElementById('consensus-output');
-        const data = await withFriction(
-          document.getElementById('consensus-button'),
-          outputEl,
-          () => fetchJson('/models/consensus', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: form.prompt.value }),
-          })
-        );
-        const verdict = data.dissent
-          ? '<span class="dissent-true">DISSENT — adapters disagree; disagreement is the output</span>'
-          : '<span class="dissent-false">CONSENSUS across ' + data.adapters.length + ' adapter(s)</span>';
-        outputEl.innerHTML = verdict + '\n\n' + JSON.stringify(data, null, 2);
+      // ---- consensus ----
+      $('consensus-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const out = $('consensus-output');
+        const data = await withFriction($('consensus-button'), out,
+          () => fetchJson('/models/consensus', { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ prompt: $('prompt').value }) }).then((r) => r.data));
+        const head = data.dissent
+          ? '<span class="bad">DISSENT — panel disagrees; disagreement is the output</span>'
+          : `<span class="ok">CONSENSUS across ${(data.adapters || []).length} members</span>`;
+        const rows = (data.results || []).map((r) => {
+          const reasons = (r.reasons && r.reasons.length) ? ` <span class="dim">(${r.reasons.map(esc).join('; ')})</span>` : '';
+          return `<tr><td>${esc(r.adapter)}</td><td class="${r.verdict === 'approve' ? 'ok' : 'bad'}">${esc(r.verdict)}</td><td>${esc(r.provider)}${reasons}</td></tr>`;
+        }).join('');
+        out.innerHTML = `${head}<table style="margin-top:0.5rem"><thead><tr><th>member</th><th>verdict</th><th>provider / reasons</th></tr></thead><tbody>${rows}</tbody></table>`;
       });
 
-      const splash = document.getElementById('boot-splash');
-      if (splash) {
-        splash.addEventListener('animationend', () => splash.remove());
+      // ---- rules ----
+      $('rules-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const { data } = await fetchJson('/rules/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: $('rules-prompt').value }) });
+        const fired = (data.fired || []).length
+          ? `<span class="bad">${data.verdict}</span> — fired: ${data.fired.map(esc).join(', ')}<br><span class="dim">${(data.reasons || []).map(esc).join('<br>')}</span>`
+          : `<span class="ok">${data.verdict}</span> — no rules fired (${data.rules_evaluated} evaluated)`;
+        $('rules-output').innerHTML = fired;
+      });
+
+      // ---- search ----
+      $('search-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const p = new URLSearchParams();
+        if ($('f-status').value) p.set('status', $('f-status').value);
+        if ($('f-subject').value) p.set('subject', $('f-subject').value);
+        if ($('f-min').value) p.set('min_confidence', $('f-min').value);
+        if ($('f-limit').value) p.set('limit', $('f-limit').value);
+        const { ok, data } = await fetchJson('/attestations?' + p.toString());
+        if (!ok) { $('ledger').innerHTML = `<span class="bad">${esc(data.error || 'error')}</span>`; return; }
+        if (!data.length) { $('ledger').textContent = 'no matches.'; return; }
+        const rows = data.map((a) => `<tr><td>${a.id}</td><td>${esc(a.subject)}</td><td>${a.confidence.toFixed(2)}</td><td class="${a.status === 'held' ? 'bad' : 'ok'}">${a.status}</td><td class="dim">${esc(a.actor)}</td></tr>`).join('');
+        $('ledger').innerHTML = `<table><thead><tr><th>#</th><th>subject</th><th>conf</th><th>status</th><th>actor</th></tr></thead><tbody>${rows}</tbody></table>`;
+      });
+
+      // ---- integrity buttons ----
+      $('verify-button').addEventListener('click', loadIntegrity);
+      $('checkpoint-button').addEventListener('click', async () => {
+        const { ok, status, data } = await fetchJson('/attestations/checkpoint', { method: 'POST', headers: authHeaders() });
+        $('checkpoint-msg').innerHTML = ok
+          ? `<span class="ok">sealed</span> head ${esc((data.head_hash || '').slice(0, 16))}… @ length ${data.length}`
+          : `<span class="bad">${status}: ${esc(data.error || 'need a steward token + OCEANICOS_SIGNING_KEY')}</span>`;
+        loadIntegrity(); refreshDashboard();
+      });
+
+      // ---- held review ----
+      async function loadHeldQueue() {
+        if (!authToken) { $('held-queue').innerHTML = '<span class="hint">identify as a steward to load the queue.</span>'; return; }
+        const { ok, status, data } = await fetchJson('/attestations/held', { headers: authHeaders() });
+        if (!ok) { $('held-queue').innerHTML = `<span class="bad">${status}: steward role required</span>`; return; }
+        if (!data.length) { $('held-queue').textContent = 'no held attestations.'; return; }
+        const rows = data.map((a) => {
+          const sla = a.sla || {};
+          const slaCell = sla.state === 'pending'
+            ? `<span class="${sla.sla_breached ? 'bad' : 'dim'}">${sla.age_seconds}s${sla.sla_breached ? ' BREACH' : ''}</span>`
+            : `<span class="dim">${sla.decision_seconds}s ${sla.within_sla ? 'ok' : 'late'}</span>`;
+          const actions = a.review_status === 'pending'
+            ? `<button class="ghost" data-id="${a.id}" data-v="release" style="padding:0.2rem 0.4rem">release</button> <button class="ghost" data-id="${a.id}" data-v="uphold" style="padding:0.2rem 0.4rem">uphold</button>`
+            : `<span class="badge">${a.review_status}</span>`;
+          return `<tr><td>${a.id}</td><td>${esc(a.subject)}</td><td>${a.confidence.toFixed(2)}</td><td>${slaCell}</td><td>${actions}</td></tr>`;
+        }).join('');
+        $('held-queue').innerHTML = `<table><thead><tr><th>#</th><th>subject</th><th>conf</th><th>sla</th><th>action</th></tr></thead><tbody>${rows}</tbody></table>`;
+        $('held-queue').querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => reviewHeld(b.dataset.id, b.dataset.v)));
+      }
+      async function reviewHeld(id, verdict) {
+        const reason = prompt(`Reason to ${verdict} attestation #${id}:`, 'reviewed out of band');
+        if (reason === null) return;
+        await fetchJson(`/attestations/${id}/review`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ verdict, reason }) });
+        loadHeldQueue(); loadIntegrity(); refreshDashboard();
       }
 
-      loadHealth();
-      loadHistory();
+      // ---- anchor ----
+      $('anchor-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const { data } = await fetchJson('/anchor?date=' + encodeURIComponent($('anchor-date').value));
+        const row = data.lookup && data.lookup.row;
+        $('anchor-output').innerHTML = row
+          ? `<span class="ok">${esc(row)}</span> <span class="dim">· ${data.rows} rows · sha ${esc((data.sha256 || '').slice(0, 12))}… · integrity ${data.integrity_ok ? 'ok' : 'FAIL'}</span>`
+          : `<span class="bad">no row for that date</span>`;
+      });
+
+      async function loadPricing() {
+        const { data } = await fetchJson('/pricing');
+        const rows = (data.tiers || []).map((t) => `<tr><td>${esc(t.name)}</td><td>$${t.price.toLocaleString()}</td><td class="dim">${(t.includes || []).map(esc).join(', ')}</td></tr>`).join('');
+        $('pricing').innerHTML = `<table><thead><tr><th>tier</th><th>$/mo</th><th>includes</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      function refreshDashboard() { loadTiles(); loadIntegrity(); }
+
+      const splash = $('boot-splash');
+      if (splash) splash.addEventListener('animationend', () => splash.remove());
+
+      loadObserver(); loadTiles(); loadIntegrity(); loadPricing();
     </script>
   </body>
 </html>
