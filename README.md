@@ -129,9 +129,11 @@ Use the endpoints:
 - GET /me/memory
 - GET /me/cvi
 - GET /me/quota
+- GET /me/usage
 - GET /admin/overview
 - GET /admin/users
 - POST /admin/users/<username>/tier
+- GET /admin/usage
 - POST /agent/run
 - GET /agent/events
 - POST /state
@@ -195,6 +197,16 @@ docker run -p 5000:5000 oceanicos
 
 The SQLite database location can be configured with the `OCEANICOS_DB` environment variable (defaults to `oceanicos.db` in the working directory).
 
+There is also a `Makefile` for one-command full-stack builds:
+
+```bash
+make test           # run the suite
+make stack          # test -> docker build (the whole stack)
+make docker-run     # run the container
+```
+
+> **Worker note:** SQLite-backed state — builds ledger, auth/users, usage audit, memory, calendar, ground-truth cache — is shared across gunicorn workers. In-memory state — the attestation engine (and therefore `/cvi`), node mounts, and the model router — currently lives per process, so run with `--workers 1` for a consistent CVI across requests, or scale out only the SQLite-backed surface. Persisting attestations to SQLite is the natural next step for multi-worker CVI.
+
 ## Real Model Provider
 
 When the `ANTHROPIC_API_KEY` environment variable is set, the app registers a `claude` adapter ([claude_adapter.py](claude_adapter.py)) that routes prompts mentioning "claude" to a real Claude model (`claude-opus-4-8`) through the official Anthropic SDK:
@@ -257,7 +269,7 @@ curl http://127.0.0.1:5000/me/cvi -H 'Authorization: Bearer <token>'      # your
 
 Stewardship is a role, not a free-for-all (see [DECISIONS/0004](DECISIONS/0004-admin-stewardship-role.md)): admins are appointed out-of-band with `OCEANICOS_ADMIN_USERS` (comma-separated usernames) and get aggregate cross-actor views (`/admin/overview`, `/admin/users`) — platform health and per-actor build counts, not the content of members' private slices. Non-admins get 403. Members can't promote themselves.
 
-The VaaS pricing tiers are enforced as real build quotas (see [DECISIONS/0005](DECISIONS/0005-per-tier-quotas.md)): new accounts default to **attestor** (10 builds), and an admin assigns tiers with `POST /admin/users/<username>/tier`. `/builder/run` returns **429** once a named actor hits its ceiling; `GET /me/quota` shows where you stand. The anonymous open path is unmetered.
+The VaaS pricing tiers are enforced as rolling-window build quotas (see [DECISIONS/0005](DECISIONS/0005-per-tier-quotas.md) and [DECISIONS/0009](DECISIONS/0009-windowed-rate-limits.md)): new accounts default to **attestor** (10 builds/hour), and an admin assigns tiers with `POST /admin/users/<username>/tier`. `/builder/run` returns **429** once a named actor exceeds its rate in the current window (the response carries `resets_at`); usage recovers continuously as builds age out. `GET /me/quota` shows `used`, `window_seconds`, and `resets_at`. The window is configurable via `OCEANICOS_QUOTA_WINDOW` (default 3600s); the anonymous open path is unmetered.
 
 The whole journey, prompt 1 to now, is compressed in [docs/COMPRESS.md](docs/COMPRESS.md) — `Gap → VaaS → Ω∞v → Observer → 0`.
 

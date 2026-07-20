@@ -6,7 +6,7 @@ from typing import Any
 
 from agent import AgentLoop
 from artifacts import ArtifactRegistry
-from attestation import AttestationEngine, score_confidence
+from attestation import AttestationEngine, consensus_delta, score_confidence
 from dashboard import Dashboard
 from decisions import DecisionRegistry
 from models import ModelAdapter, ModelRouter
@@ -89,6 +89,7 @@ class UniversalBuilder:
         stages.append("workflow")
 
         model_result = self.model_router.route(task)
+        consensus = self.model_router.route_all(task, panel=3)
         stages.append("route")
 
         agent_result = self.agent_loop.run(task, context)
@@ -128,11 +129,18 @@ class UniversalBuilder:
         )
         stages.append("workspace")
 
-        confidence = score_confidence(stages, context is not None)
+        delta = consensus_delta(consensus["verdicts"])
+        confidence = score_confidence(stages, context is not None, consensus=delta)
+        verdict_note = "dissent" if consensus["dissent"] else "agreement"
         attestation = self.attestation_engine.attest(
             f"build-{run_id}",
             build_content,
-            sources=stages + [f"workspace:{build_file['path']}", f"actor:{actor}"],
+            sources=stages
+            + [
+                f"workspace:{build_file['path']}",
+                f"actor:{actor}",
+                f"consensus:{consensus['majority']}({verdict_note})",
+            ],
             confidence=confidence,
             actor=actor,
         )
@@ -165,6 +173,7 @@ class UniversalBuilder:
             "plan": plan,
             "workflow": workflow,
             "model": model_result,
+            "consensus": consensus,
             "agent": {"task": agent_result["task"]},
             "review": review,
             "decision": decision,

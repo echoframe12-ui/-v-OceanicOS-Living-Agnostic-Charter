@@ -2,6 +2,7 @@ import csv
 import hashlib
 import io
 import os
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -14,11 +15,13 @@ from auth import ANONYMOUS, AuthRegistry
 from claude_adapter import create_claude_adapter
 from dashboard import Dashboard
 from decisions import DecisionRegistry
+import models
 from models import ModelAdapter, ModelRouter
 from nodes import NodeRegistry
 from planner import Planner
 from plugins import PluginRegistry
 import quotas
+from usage import UsageLog
 from review import ReviewEngine
 from server import OceanicOSService
 from state import StateSnapshot
@@ -30,12 +33,24 @@ service = OceanicOSService()
 workflow_engine = WorkflowEngine()
 planner = Planner()
 model_router = ModelRouter()
-model_router.register(ModelAdapter("local", "demo"))
 model_router.register(
-    ModelAdapter("reasoning", "demo", keywords=["plan", "build", "design", "charter"])
+    ModelAdapter("local", "demo", strategy=models.strategy_literal)
 )
 model_router.register(
-    ModelAdapter("skeptic", "demo", keywords=["plan", "verify", "charter", "attest"])
+    ModelAdapter(
+        "reasoning",
+        "demo",
+        keywords=["plan", "build", "design", "charter"],
+        strategy=models.strategy_optimist,
+    )
+)
+model_router.register(
+    ModelAdapter(
+        "skeptic",
+        "demo",
+        keywords=["plan", "verify", "charter", "attest"],
+        strategy=models.strategy_skeptic,
+    )
 )
 claude_adapter = create_claude_adapter(keywords=["claude"])
 if claude_adapter is not None:
@@ -50,6 +65,7 @@ plugin_registry = PluginRegistry()
 attestation_engine = AttestationEngine()
 node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
+usage_log = UsageLog(str(service.db_path))
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
@@ -89,6 +105,19 @@ def _current_user() -> dict:
 
 def _current_actor() -> str:
     return _current_user()["username"]
+
+
+def _windowed_quota(actor: str, tier: str) -> dict:
+    """A tier's build quota measured over the rolling usage window."""
+    used, oldest = usage_log.count_in_window(actor, "build", quotas.WINDOW_SECONDS)
+    resets_at = None
+    if oldest is not None:
+        resets_at = (
+            datetime.fromisoformat(oldest) + timedelta(seconds=quotas.WINDOW_SECONDS)
+        ).isoformat()
+    return quotas.quota_status(
+        tier, used, window_seconds=quotas.WINDOW_SECONDS, resets_at=resets_at
+    )
 
 
 def require_auth(view):
@@ -445,9 +474,9 @@ def run_builder():
 
     # Named actors are metered against their tier; the open anonymous path is not.
     if g.actor != ANONYMOUS:
-        used = len(service.list_builds(actor=g.actor))
-        status = quotas.quota_status(g.tier, used)
+        status = _windowed_quota(g.actor, g.tier)
         if status["exceeded"]:
+            usage_log.record(g.actor, "quota_exceeded", g.tier, task)
             return (
                 jsonify(
                     {
@@ -455,12 +484,15 @@ def run_builder():
                         "tier": status["tier"],
                         "limit": status["limit"],
                         "used": status["used"],
+                        "window_seconds": status["window_seconds"],
+                        "resets_at": status["resets_at"],
                     }
                 ),
                 429,
             )
 
     result = builder.run(task, context, actor=g.actor)
+    usage_log.record(g.actor, "build", g.tier, task)
     result["dashboard"] = dashboard.summary()
     return jsonify(result)
 
@@ -501,7 +533,16 @@ def auth_users():
 def admin_set_tier(username: str):
     payload = request.get_json(silent=True) or {}
     tier = payload.get("tier", "")
-    return jsonify(auth_registry.set_tier(username, tier))
+    result = auth_registry.set_tier(username, tier)
+    usage_log.record(username, "tier_change", tier, f"by {g.actor}")
+    return jsonify(result)
+
+
+@app.route("/admin/usage", methods=["GET"])
+@require_admin
+def admin_usage():
+    actor = request.args.get("actor")
+    return jsonify(usage_log.list(actor=actor))
 
 
 @app.route("/admin/users", methods=["GET"])
@@ -530,6 +571,7 @@ def admin_overview():
             "held": len(attestation_engine.held()),
             "cvi": attestation_engine.cvi()["cvi"],
             "actors": sorted({build["actor"] for build in builds}),
+            "usage": usage_log.summary()["by_action"],
         }
     )
 
@@ -562,8 +604,13 @@ def my_cvi():
 @app.route("/me/quota", methods=["GET"])
 @require_auth
 def my_quota():
-    used = len(service.list_builds(actor=g.actor))
-    return jsonify(quotas.quota_status(g.tier, used))
+    return jsonify(_windowed_quota(g.actor, g.tier))
+
+
+@app.route("/me/usage", methods=["GET"])
+@require_auth
+def my_usage():
+    return jsonify(usage_log.list(actor=g.actor))
 
 
 @app.route("/plugins", methods=["POST"])

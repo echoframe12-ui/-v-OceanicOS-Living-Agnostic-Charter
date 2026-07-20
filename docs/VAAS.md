@@ -13,13 +13,17 @@ computational cost of verification, made visible.
 
 | Tier | Price | Build quota | Includes |
 | --- | --- | --- | --- |
-| **Attestor** | $8,500 | 10 builds | Attestation API, Composite Verification Index (CVI), CSV/.txt ledger exports |
-| **Arbiter** | $25,500 | 50 builds | Everything in Attestor + 3-adapter dissent panels, held-review SLAs |
+| **Attestor** | $8,500 | 10 builds / hour | Attestation API, Composite Verification Index (CVI), CSV/.txt ledger exports |
+| **Arbiter** | $25,500 | 50 builds / hour | Everything in Attestor + 3-adapter dissent panels, held-review SLAs |
 | **Sovereign** | $85,000 | unlimited | Everything in Arbiter + on-prem binary distribution, hardware-key (YubiKey) handoff, no source escrow |
 
-Live tier data: `GET /pricing`. The build quota is enforced per named account
-(`GET /me/quota`); an admin assigns tiers (`POST /admin/users/<username>/tier`).
-See [DECISIONS/0005](../DECISIONS/0005-per-tier-quotas.md).
+Live tier data: `GET /pricing`. The quota is a **rolling rate limit** enforced
+per named account (`GET /me/quota` reports `used`, `window_seconds`, and
+`resets_at`); usage recovers continuously as builds age out of the window. The
+window is configurable via `OCEANICOS_QUOTA_WINDOW` (default 3600s). An admin
+assigns tiers (`POST /admin/users/<username>/tier`). See
+[DECISIONS/0005](../DECISIONS/0005-per-tier-quotas.md) and
+[DECISIONS/0009](../DECISIONS/0009-windowed-rate-limits.md).
 
 ## Composite Verification Index
 

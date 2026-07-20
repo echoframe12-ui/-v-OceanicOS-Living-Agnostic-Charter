@@ -1,7 +1,28 @@
 import hashlib
 import unittest
 
-from attestation import CONFIDENCE_THRESHOLD, AttestationEngine, score_confidence
+from attestation import (
+    CONFIDENCE_THRESHOLD,
+    AttestationEngine,
+    consensus_delta,
+    score_confidence,
+)
+
+
+class ConsensusDeltaTests(unittest.TestCase):
+    def test_unanimous_approve_raises(self):
+        self.assertEqual(consensus_delta(["approve", "approve", "approve"]), 0.1)
+
+    def test_unanimous_revise_penalizes_hardest(self):
+        self.assertEqual(consensus_delta(["revise", "revise", "revise"]), -0.2)
+
+    def test_split_leans_to_the_majority(self):
+        self.assertEqual(consensus_delta(["approve", "approve", "revise"]), 0.05)
+        self.assertEqual(consensus_delta(["revise", "revise", "approve"]), -0.1)
+
+    def test_abstentions_do_not_move_the_score(self):
+        self.assertEqual(consensus_delta(["abstain"]), 0.0)
+        self.assertEqual(consensus_delta([]), 0.0)
 
 
 class ScoreConfidenceTests(unittest.TestCase):
@@ -9,6 +30,21 @@ class ScoreConfidenceTests(unittest.TestCase):
         low = score_confidence(["plan"], True)
         high = score_confidence(["plan", "workflow", "route", "agent"], True)
         self.assertGreater(high, low)
+
+    def test_consensus_can_cross_the_threshold_in_both_directions(self):
+        eight = ["s"] * 8
+        # a well-evidenced build (base 0.9 with context) is attested on its own,
+        # but unanimous "revise" pulls it below the hold line
+        self.assertGreaterEqual(score_confidence(eight, True), CONFIDENCE_THRESHOLD)
+        self.assertLess(
+            score_confidence(eight, True, consensus=-0.2), CONFIDENCE_THRESHOLD
+        )
+        # a context-free build (base 0.7) is held on its own, but unanimous
+        # "approve" lifts it back over the line
+        self.assertLess(score_confidence(eight, False), CONFIDENCE_THRESHOLD)
+        self.assertGreaterEqual(
+            score_confidence(eight, False, consensus=0.1), CONFIDENCE_THRESHOLD
+        )
 
     def test_missing_context_drops_below_threshold(self):
         stages = ["plan", "workflow", "route", "agent", "review", "decision", "artifact", "workspace"]
