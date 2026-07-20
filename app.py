@@ -11,6 +11,7 @@ from flask import Flask, Response, g, jsonify, render_template, request
 
 import anchor
 import identity
+import metrics
 from agent import AgentLoop
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
@@ -446,6 +447,43 @@ def export_builds_txt():
 @app.route("/cvi", methods=["GET"])
 def composite_verification_index():
     return jsonify(attestation_engine.cvi(released_ids=held_review_log.released_ids()))
+
+
+@app.route("/metrics", methods=["GET"])
+def prometheus_metrics():
+    """Platform state in the Prometheus text format — scrapeable by any monitor.
+
+    Aggregate scalars only (no per-actor content), consistent with `/cvi` being
+    public: verification quality, the held queue and its SLA breaches, and the
+    ledger's integrity, all as one standard exposition.
+    """
+    verify = attestation_engine.verify()
+    held = attestation_engine.held()
+    released = held_review_log.released_ids()
+    held_pending = [att for att in held if att["id"] not in released]
+    held_breached = sum(
+        1
+        for att in held
+        if sla_status(
+            att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS
+        ).get("sla_breached")
+    )
+    policy = attestation_engine.checkpoint_policy
+    snapshot = [
+        {"name": "oceanicos_attestations_total", "help": "Total attestations on record", "value": len(attestation_engine.list())},
+        {"name": "oceanicos_attestations_held", "help": "Attestations held below the confidence threshold", "value": len(held)},
+        {"name": "oceanicos_held_pending", "help": "Held attestations awaiting a steward decision", "value": len(held_pending)},
+        {"name": "oceanicos_held_sla_breached", "help": "Pending held attestations past the review SLA", "value": held_breached},
+        {"name": "oceanicos_cvi", "help": "Composite Verification Index (0-1), released items credited", "value": attestation_engine.cvi(released_ids=released)["cvi"]},
+        {"name": "oceanicos_builds_total", "help": "Total builds in the ledger", "value": len(service.list_builds())},
+        {"name": "oceanicos_users_total", "help": "Registered accounts", "value": len(auth_registry.list_users())},
+        {"name": "oceanicos_chain_intact", "help": "Attestation hash chain integrity (1 intact, 0 broken)", "value": bool(verify["intact"])},
+        {"name": "oceanicos_chain_length", "help": "Number of links in the attestation chain", "value": verify["length"]},
+        {"name": "oceanicos_chain_trustworthy", "help": "Chain intact and signed head verified (1 yes, 0 no)", "value": bool(verify.get("trustworthy"))},
+        {"name": "oceanicos_checkpoint_auto", "help": "Automatic checkpoint sealing enabled (1 yes, 0 no)", "value": policy["auto"]},
+        {"name": "oceanicos_model_adapters", "help": "Registered dissent-panel adapters", "value": len(model_router.list_adapters())},
+    ]
+    return Response(metrics.render(snapshot), mimetype=metrics.CONTENT_TYPE)
 
 
 @app.route("/nodes", methods=["POST"])

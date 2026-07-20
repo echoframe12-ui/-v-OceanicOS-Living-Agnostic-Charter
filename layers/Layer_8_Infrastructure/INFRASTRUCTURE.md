@@ -15,6 +15,7 @@ What the platform runs on — and what it degrades to.
 | Ledger integrity | `attestation_engine.verify()` / `checkpoint()` | Hash-chained attestations plus operator-signed checkpoints; `OCEANICOS_SIGNING_KEY` stays out of the database so a DB-only tamper can't forge a valid head. `OCEANICOS_CHECKPOINT_EVERY` auto-seals the head on a cadence so the signed guarantee runs without a human in the loop |
 | Graceful degradation | `/builds/export`, `/attestations/export` + `verify_ledger.py`, `/anchor` + `anchor.py` | The builds ledger exports as CSV; the attestation ledger exports as a self-contained bundle that `verify_ledger.py` re-walks offline; past both sits the Anchor of Last Resort (`boot/anchor_2019.txt`) — a fixed 2019 dataset that `anchor.py` answers from with nothing else running. The ground truth, and its integrity, survive without the system |
 | Boot | `oceanic_os.py` + `boot/init.v1` | `oceanic-os --boot boot/init.v1 --state stateless --exit 0` instantiates the stack from the ratified, hash-attested manifest and reports the live status of each layer |
+| Observability | `metrics.py` + `/metrics` | Platform state (CVI, held queue, SLA breaches, chain integrity, builds, adapters) in the Prometheus text exposition format — scrapeable by any monitoring stack, no custom integration |
 
 ## Principles applied
 

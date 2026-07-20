@@ -210,6 +210,17 @@ class OceanicOSAppTests(unittest.TestCase):
         # the rules engine sits on the panel as the deterministic anchor
         self.assertIn("rules-engine", payload["adapters"])
 
+    def test_metrics_endpoint_exposes_prometheus_text(self):
+        resp = self.client.get("/metrics")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/plain", resp.content_type)
+        body = resp.get_data(as_text=True)
+        # standard exposition shape and a few known series
+        self.assertIn("# HELP oceanicos_cvi", body)
+        self.assertIn("# TYPE oceanicos_cvi gauge", body)
+        self.assertIn("oceanicos_chain_intact 1", body)
+        self.assertIn("oceanicos_attestations_total", body)
+
     def test_rules_evaluate_endpoint_explains_itself(self):
         response = self.client.post(
             "/rules/evaluate",
