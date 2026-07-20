@@ -358,8 +358,10 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(quota["tier"], "attestor")
         self.assertEqual(quota["used"], 0)
         self.assertFalse(quota["exceeded"])
+        self.assertEqual(quota["window_seconds"], quotas.WINDOW_SECONDS)
 
-        # tighten the attestor limit to 1 for a fast, deterministic 429
+        # tighten the attestor limit to 1 for a fast, deterministic 429 (both
+        # builds land in the same window, so the second is refused)
         with patch.dict(quotas.TIER_LIMITS, {"attestor": 1}):
             first = self.client.post(
                 "/builder/run",
@@ -376,8 +378,11 @@ class OceanicOSAppTests(unittest.TestCase):
                 headers=auth,
             )
             self.assertEqual(blocked.status_code, 429)
-            self.assertEqual(blocked.get_json()["error"], "quota exceeded")
-            self.assertEqual(blocked.get_json()["tier"], "attestor")
+            body = blocked.get_json()
+            self.assertEqual(body["error"], "quota exceeded")
+            self.assertEqual(body["tier"], "attestor")
+            self.assertEqual(body["window_seconds"], quotas.WINDOW_SECONDS)
+            self.assertIsNotNone(body["resets_at"])
 
     def test_admin_can_promote_a_users_tier(self):
         app_module.auth_registry.admin_users.add("tier-steward")

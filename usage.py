@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -78,3 +78,25 @@ class UsageLog:
         for event in self.list(actor):
             counts[event["action"]] = counts.get(event["action"], 0) + 1
         return {"actor": actor, "total": sum(counts.values()), "by_action": counts}
+
+    def count_in_window(
+        self,
+        actor: str,
+        action: str,
+        window_seconds: int,
+        now: datetime | None = None,
+    ) -> tuple[int, str | None]:
+        """Count an actor's events of one action within a rolling window.
+
+        Returns the count and the oldest in-window timestamp (ISO 8601), which
+        the caller can add to the window to compute when a slot frees. `now`
+        is injectable so windowing is testable without real time passing.
+        """
+        now = now or datetime.now(timezone.utc)
+        cutoff = (now - timedelta(seconds=window_seconds)).isoformat()
+        stamps = sorted(
+            event["created_at"]
+            for event in self.list(actor)
+            if event["action"] == action and event["created_at"] >= cutoff
+        )
+        return len(stamps), (stamps[0] if stamps else None)

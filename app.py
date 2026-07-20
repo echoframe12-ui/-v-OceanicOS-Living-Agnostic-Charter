@@ -2,6 +2,7 @@ import csv
 import hashlib
 import io
 import os
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -104,6 +105,19 @@ def _current_user() -> dict:
 
 def _current_actor() -> str:
     return _current_user()["username"]
+
+
+def _windowed_quota(actor: str, tier: str) -> dict:
+    """A tier's build quota measured over the rolling usage window."""
+    used, oldest = usage_log.count_in_window(actor, "build", quotas.WINDOW_SECONDS)
+    resets_at = None
+    if oldest is not None:
+        resets_at = (
+            datetime.fromisoformat(oldest) + timedelta(seconds=quotas.WINDOW_SECONDS)
+        ).isoformat()
+    return quotas.quota_status(
+        tier, used, window_seconds=quotas.WINDOW_SECONDS, resets_at=resets_at
+    )
 
 
 def require_auth(view):
@@ -460,8 +474,7 @@ def run_builder():
 
     # Named actors are metered against their tier; the open anonymous path is not.
     if g.actor != ANONYMOUS:
-        used = len(service.list_builds(actor=g.actor))
-        status = quotas.quota_status(g.tier, used)
+        status = _windowed_quota(g.actor, g.tier)
         if status["exceeded"]:
             usage_log.record(g.actor, "quota_exceeded", g.tier, task)
             return (
@@ -471,6 +484,8 @@ def run_builder():
                         "tier": status["tier"],
                         "limit": status["limit"],
                         "used": status["used"],
+                        "window_seconds": status["window_seconds"],
+                        "resets_at": status["resets_at"],
                     }
                 ),
                 429,
@@ -589,8 +604,7 @@ def my_cvi():
 @app.route("/me/quota", methods=["GET"])
 @require_auth
 def my_quota():
-    used = len(service.list_builds(actor=g.actor))
-    return jsonify(quotas.quota_status(g.tier, used))
+    return jsonify(_windowed_quota(g.actor, g.tier))
 
 
 @app.route("/me/usage", methods=["GET"])

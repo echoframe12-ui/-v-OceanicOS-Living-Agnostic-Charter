@@ -44,6 +44,31 @@ class UsageLogTests(unittest.TestCase):
         reopened = UsageLog(self.db_path)
         self.assertEqual(len(reopened.list()), 1)
 
+    def test_count_in_window(self):
+        from datetime import datetime, timedelta, timezone
+
+        self.usage.record("alice", "build", "attestor")
+        self.usage.record("alice", "build", "attestor")
+        self.usage.record("bob", "build", "attestor")
+
+        count, oldest = self.usage.count_in_window("alice", "build", 3600)
+        self.assertEqual(count, 2)
+        self.assertIsNotNone(oldest)
+
+        # a 'now' two hours ahead ages every event out of a 1-hour window
+        future = datetime.now(timezone.utc) + timedelta(hours=2)
+        aged_count, aged_oldest = self.usage.count_in_window(
+            "alice", "build", 3600, now=future
+        )
+        self.assertEqual(aged_count, 0)
+        self.assertIsNone(aged_oldest)
+
+    def test_count_in_window_filters_by_action(self):
+        self.usage.record("alice", "build", "attestor")
+        self.usage.record("alice", "quota_exceeded", "attestor")
+        count, _ = self.usage.count_in_window("alice", "build", 3600)
+        self.assertEqual(count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
