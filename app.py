@@ -13,6 +13,7 @@ import anchor
 import identity
 import metrics
 from agent import AgentLoop
+from cvi_history import CviHistory
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
 from auth import ANONYMOUS, AuthRegistry
@@ -81,8 +82,15 @@ node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
 usage_log = UsageLog(str(service.db_path))
 held_review_log = HeldReviewLog(str(service.db_path))
+cvi_history = CviHistory(str(service.db_path))
 # Time-to-decision SLA for held attestations (seconds). 0 disables breach flags.
 HELD_SLA_SECONDS = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
+
+
+def _snapshot_cvi() -> None:
+    """Record the current platform CVI when it has moved (round 29)."""
+    snapshot = attestation_engine.cvi(released_ids=held_review_log.released_ids())
+    cvi_history.record_if_changed(snapshot)
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
@@ -380,6 +388,7 @@ def review_held_attestation(att_id: int):
 
     review = held_review_log.record(att_id, g.actor, verdict, reason)
     usage_log.record(g.actor, "held_review", g.tier, f"{verdict} #{att_id}")
+    _snapshot_cvi()  # a release/uphold can move the CVI
     return jsonify(review)
 
 
@@ -476,6 +485,20 @@ def export_builds_txt():
 @app.route("/cvi", methods=["GET"])
 def composite_verification_index():
     return jsonify(attestation_engine.cvi(released_ids=held_review_log.released_ids()))
+
+
+@app.route("/cvi/history", methods=["GET"])
+def cvi_trend():
+    """The CVI over time — the trend behind the headline number.
+
+    `?actor=` selects a series (default the platform-wide one); `?limit=` caps
+    to the most recent N points. Public and aggregate, consistent with `/cvi`.
+    """
+    actor = request.args.get("actor", "")
+    limit = request.args.get("limit", type=int) if "limit" in request.args else None
+    if "limit" in request.args and limit is None:
+        return jsonify({"error": "limit must be an integer"}), 400
+    return jsonify(cvi_history.list(actor=actor, limit=limit))
 
 
 @app.route("/metrics", methods=["GET"])
@@ -725,6 +748,7 @@ def run_builder():
 
     result = builder.run(task, context, actor=g.actor)
     usage_log.record(g.actor, "build", g.tier, task)
+    _snapshot_cvi()
     result["dashboard"] = dashboard.summary()
     return jsonify(result)
 

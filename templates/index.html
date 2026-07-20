@@ -234,12 +234,23 @@
           · manifest <span class="dim">${esc((data.manifest_sha256 || '').slice(0, 16))}…</span> · anchor ${data.anchor_present ? '<span class="ok">present</span>' : '<span class="bad">absent</span>'} · exit ${data.exit}`;
       }
 
+      function sparkline(values) {
+        if (!values.length) return '<span class="dim">— no history yet</span>';
+        const blocks = '▁▂▃▄▅▆▇█';
+        // CVI is bounded 0–1, so scale against that fixed range, not the sample min/max
+        return values.map((v) => blocks[Math.min(7, Math.max(0, Math.round(v * 7)))]).join('');
+      }
+
       async function loadIntegrity() {
-        const [{ data: cvi }, { data: chain }] = await Promise.all([fetchJson('/cvi'), fetchJson('/attestations/verify')]);
+        const [{ data: cvi }, { data: chain }, { data: history }] = await Promise.all([
+          fetchJson('/cvi'), fetchJson('/attestations/verify'), fetchJson('/cvi/history?limit=40'),
+        ]);
         const trust = chain.trustworthy ? '<span class="ok">TRUSTWORTHY</span>' : (chain.checkpointed ? '<span class="bad">unsigned/mismatch</span>' : '<span class="dim">unsealed</span>');
+        const trend = (history || []).map((p) => p.cvi);
         $('integrity').innerHTML = `
           <table>
             <tr><th>CVI</th><td>${cvi.cvi} <span class="dim">(mean ${cvi.mean_confidence}, held ${cvi.held_ratio}, n=${cvi.samples})</span></td></tr>
+            <tr><th>trend</th><td><span class="ok" style="letter-spacing:1px">${sparkline(trend)}</span> <span class="dim">${trend.length} pts</span></td></tr>
             <tr><th>chain</th><td class="${chain.intact ? 'ok' : 'bad'}">${chain.intact ? 'INTACT' : 'BROKEN @ ' + chain.broken_at} · length ${chain.length}</td></tr>
             <tr><th>checkpoint</th><td>${trust}</td></tr>
           </table>`;

@@ -13,6 +13,7 @@ The layer that looks after the whole — direction, memory, and accountability o
 | Accountable stewardship | `auth.py` roles + `/admin/*` | An appointed admin role (via `OCEANICOS_ADMIN_USERS`) sees across actors — aggregate health, not member content; see [DECISIONS/0004](../../DECISIONS/0004-admin-stewardship-role.md) |
 | Usage audit trail | `usage.py` + `/me/usage`, `/admin/usage` | Every metered event (build, quota block, tier change) is logged per actor with the tier in force — auditable, billable history; see [DECISIONS/0006](../../DECISIONS/0006-usage-metering-audit.md) |
 | Held-review workflow | `held_reviews.py` + `/attestations/held`, `/attestations/<id>/review` | A steward reviews held attestations and records `release`/`uphold` with a reason. Append-only — the held item is never edited, so the chain stays intact — and a documented release lifts it out of the CVI's held ratio; see [DECISIONS/0018](../../DECISIONS/0018-held-review-workflow.md) |
+| CVI trend history | `cvi_history.py` + `/cvi/history` | The trust index recorded over time (change-only, at each build and held-review), so verification quality is a watchable trend, not just a snapshot; see [DECISIONS/0023](../../DECISIONS/0023-cvi-trend-history.md) |
 
 ## Principles applied
 

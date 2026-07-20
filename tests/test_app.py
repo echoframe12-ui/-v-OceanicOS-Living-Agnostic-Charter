@@ -231,6 +231,24 @@ class OceanicOSAppTests(unittest.TestCase):
             self.client.get("/attestations?min_confidence=high").status_code, 400
         )
 
+    def test_cvi_history_records_on_build_and_matches_cvi(self):
+        before = len(self.client.get("/cvi/history").get_json())
+        self.client.post(
+            "/builder/run",
+            data=json.dumps({"task": "trend build", "context": "c"}),
+            content_type="application/json",
+        )
+        series = self.client.get("/cvi/history").get_json()
+        self.assertGreater(len(series), before)
+        # the latest point equals the current CVI
+        current = self.client.get("/cvi").get_json()["cvi"]
+        self.assertEqual(series[-1]["cvi"], current)
+
+    def test_cvi_history_limit_and_validation(self):
+        limited = self.client.get("/cvi/history?limit=1").get_json()
+        self.assertLessEqual(len(limited), 1)
+        self.assertEqual(self.client.get("/cvi/history?limit=nope").status_code, 400)
+
     def test_metrics_endpoint_exposes_prometheus_text(self):
         resp = self.client.get("/metrics")
         self.assertEqual(resp.status_code, 200)
