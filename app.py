@@ -292,8 +292,37 @@ def rules_evaluate():
 
 @app.route("/attestations", methods=["GET"])
 def list_attestations():
-    actor = request.args.get("actor")
-    return jsonify(attestation_engine.list(actor=actor))
+    """List the record, optionally filtered.
+
+    Query params: actor, status (attested|held), min_confidence, max_confidence,
+    subject (substring), since (ISO timestamp), limit. No params returns the
+    whole record, so existing callers are unaffected.
+    """
+    args = request.args
+    status = args.get("status")
+    if status is not None and status not in ("attested", "held"):
+        return jsonify({"error": "status must be 'attested' or 'held'"}), 400
+    try:
+        min_conf = args.get("min_confidence", type=float) if "min_confidence" in args else None
+        max_conf = args.get("max_confidence", type=float) if "max_confidence" in args else None
+        limit = args.get("limit", type=int) if "limit" in args else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "min_confidence/max_confidence must be numbers, limit an integer"}), 400
+    # request.args.get(type=...) returns None on a parse failure rather than raising
+    for name, value in (("min_confidence", min_conf), ("max_confidence", max_conf), ("limit", limit)):
+        if name in args and value is None:
+            return jsonify({"error": f"{name} is not a valid number"}), 400
+    return jsonify(
+        attestation_engine.search(
+            actor=args.get("actor"),
+            status=status,
+            min_confidence=min_conf,
+            max_confidence=max_conf,
+            subject_contains=args.get("subject"),
+            since=args.get("since"),
+            limit=limit,
+        )
+    )
 
 
 def _review_status(att_id: int, released: set[int]) -> str:

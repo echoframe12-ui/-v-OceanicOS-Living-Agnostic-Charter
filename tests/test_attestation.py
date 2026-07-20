@@ -293,6 +293,51 @@ class SignedCheckpointTests(unittest.TestCase):
         self.assertEqual(checkpoints[-1]["length"], 2)
 
 
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.engine = AttestationEngine(self.db_path)
+        self.engine.attest("charter-plan", "a", [], 0.9, actor="alice")
+        self.engine.attest("charter-review", "b", [], 0.5, actor="bob")  # held
+        self.engine.attest("deploy-step", "c", [], 0.95, actor="alice")
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_no_filters_returns_everything(self):
+        self.assertEqual(len(self.engine.search()), 3)
+
+    def test_filter_by_status(self):
+        held = self.engine.search(status="held")
+        self.assertEqual(len(held), 1)
+        self.assertEqual(held[0]["subject"], "charter-review")
+
+    def test_filter_by_actor_and_confidence_range(self):
+        result = self.engine.search(actor="alice", min_confidence=0.92)
+        self.assertEqual([a["subject"] for a in result], ["deploy-step"])
+
+    def test_filter_by_subject_substring(self):
+        result = self.engine.search(subject_contains="charter")
+        self.assertEqual(len(result), 2)
+
+    def test_limit_caps_results(self):
+        self.assertEqual(len(self.engine.search(limit=2)), 2)
+
+    def test_since_filters_by_timestamp(self):
+        # a future timestamp excludes everything; the epoch includes all
+        self.assertEqual(self.engine.search(since="2999-01-01T00:00:00+00:00"), [])
+        self.assertEqual(len(self.engine.search(since="1970-01-01T00:00:00+00:00")), 3)
+
+    def test_filters_are_parameterized_against_injection(self):
+        # a SQL metacharacter payload is treated as a literal subject, not code
+        result = self.engine.search(subject_contains="'; DROP TABLE attestations;--")
+        self.assertEqual(result, [])
+        self.assertEqual(len(self.engine.search()), 3)  # table intact
+
+
 class AutoCheckpointTests(unittest.TestCase):
     def setUp(self):
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")

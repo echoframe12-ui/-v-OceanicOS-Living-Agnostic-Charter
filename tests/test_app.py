@@ -210,6 +210,27 @@ class OceanicOSAppTests(unittest.TestCase):
         # the rules engine sits on the panel as the deterministic anchor
         self.assertIn("rules-engine", payload["adapters"])
 
+    def test_attestations_filtering(self):
+        engine = app_module.attestation_engine
+        engine.attest("filter-attested", "x", [], 0.9, actor="filter-user")
+        engine.attest("filter-held", "y", [], 0.5, actor="filter-user")
+
+        held = self.client.get("/attestations?status=held&actor=filter-user").get_json()
+        self.assertTrue(held)
+        self.assertTrue(all(a["status"] == "held" for a in held))
+
+        subject = self.client.get("/attestations?subject=filter-attested").get_json()
+        self.assertEqual([a["subject"] for a in subject], ["filter-attested"])
+
+        limited = self.client.get("/attestations?limit=1").get_json()
+        self.assertEqual(len(limited), 1)
+
+        # validation
+        self.assertEqual(self.client.get("/attestations?status=bogus").status_code, 400)
+        self.assertEqual(
+            self.client.get("/attestations?min_confidence=high").status_code, 400
+        )
+
     def test_metrics_endpoint_exposes_prometheus_text(self):
         resp = self.client.get("/metrics")
         self.assertEqual(resp.status_code, 200)

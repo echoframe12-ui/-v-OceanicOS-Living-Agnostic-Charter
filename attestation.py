@@ -263,28 +263,70 @@ class AttestationEngine:
             except RuntimeError:
                 pass
 
+    @staticmethod
+    def _to_dict(row: tuple) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "subject": row[1],
+            "actor": row[2],
+            "sha256": row[3],
+            "confidence": row[4],
+            "threshold": row[5],
+            "status": row[6],
+            "sources": json.loads(row[7]),
+            "created_at": row[8],
+            "prev_hash": row[9],
+            "entry_hash": row[10],
+        }
+
     def _rows(self, where: str = "", params: tuple = ()) -> list[dict[str, Any]]:
         query = (
             f"SELECT {self._COLUMNS} FROM attestations "
         ) + where + " ORDER BY id"
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute(query, params).fetchall()
-        return [
-            {
-                "id": row[0],
-                "subject": row[1],
-                "actor": row[2],
-                "sha256": row[3],
-                "confidence": row[4],
-                "threshold": row[5],
-                "status": row[6],
-                "sources": json.loads(row[7]),
-                "created_at": row[8],
-                "prev_hash": row[9],
-                "entry_hash": row[10],
-            }
-            for row in rows
-        ]
+        return [self._to_dict(row) for row in rows]
+
+    def search(
+        self,
+        *,
+        actor: str | None = None,
+        status: str | None = None,
+        min_confidence: float | None = None,
+        max_confidence: float | None = None,
+        subject_contains: str | None = None,
+        since: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Query the record with fully parameterized filters.
+
+        Every filter is a bound parameter, never string-interpolated, so the
+        query surface can grow without opening an injection seam. No filters
+        returns the whole record in order — the same as `list()`. Filters
+        compose with AND; `since` and confidence bounds are inclusive.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if actor is not None:
+            clauses.append("actor = ?"); params.append(actor)
+        if status is not None:
+            clauses.append("status = ?"); params.append(status)
+        if min_confidence is not None:
+            clauses.append("confidence >= ?"); params.append(min_confidence)
+        if max_confidence is not None:
+            clauses.append("confidence <= ?"); params.append(max_confidence)
+        if subject_contains is not None:
+            clauses.append("subject LIKE ?"); params.append(f"%{subject_contains}%")
+        if since is not None:
+            clauses.append("created_at >= ?"); params.append(since)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        query = f"SELECT {self._COLUMNS} FROM attestations {where} ORDER BY id"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(int(limit))
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [self._to_dict(row) for row in rows]
 
     def verify_chain(self) -> dict[str, Any]:
         """Walk the ledger and confirm no attestation was retroactively altered.
