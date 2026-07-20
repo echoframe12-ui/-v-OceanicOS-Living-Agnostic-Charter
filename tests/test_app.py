@@ -222,6 +222,116 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("unbounded_scope", payload["fired"])
         self.assertTrue(payload["reasons"])  # the reason travels with the verdict
 
+    def test_held_review_workflow_releases_and_lifts_cvi(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("held-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "held-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "held-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            # a held attestation (below the 0.74 threshold)
+            held = engine.attest("held-subject", "content", [], 0.5, actor="held-member")
+            self.assertEqual(held["status"], "held")
+
+            auth = {"Authorization": f"Bearer {admin}"}
+
+            # it shows up pending in the steward's held queue
+            queue = self.client.get("/attestations/held", headers=auth).get_json()
+            entry = next(a for a in queue if a["id"] == held["id"])
+            self.assertEqual(entry["review_status"], "pending")
+
+            # a non-admin cannot review
+            forbidden = self.client.post(
+                f"/attestations/{held['id']}/review",
+                data=json.dumps({"verdict": "release", "reason": "ok"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {member}"},
+            )
+            self.assertEqual(forbidden.status_code, 403)
+
+            # validation: bad verdict and empty reason are rejected
+            self.assertEqual(
+                self.client.post(
+                    f"/attestations/{held['id']}/review",
+                    data=json.dumps({"verdict": "nope", "reason": "x"}),
+                    content_type="application/json",
+                    headers=auth,
+                ).status_code,
+                400,
+            )
+            self.assertEqual(
+                self.client.post(
+                    f"/attestations/{held['id']}/review",
+                    data=json.dumps({"verdict": "release", "reason": "  "}),
+                    content_type="application/json",
+                    headers=auth,
+                ).status_code,
+                400,
+            )
+
+            # missing id -> 404
+            self.assertEqual(
+                self.client.post(
+                    "/attestations/999999/review",
+                    data=json.dumps({"verdict": "release", "reason": "x"}),
+                    content_type="application/json",
+                    headers=auth,
+                ).status_code,
+                404,
+            )
+
+            cvi_before = self.client.get("/cvi").get_json()["cvi"]
+
+            # release it, on the record with a reason
+            released = self.client.post(
+                f"/attestations/{held['id']}/review",
+                data=json.dumps({"verdict": "release", "reason": "evidence re-checked"}),
+                content_type="application/json",
+                headers=auth,
+            )
+            self.assertEqual(released.status_code, 200)
+
+            # the trail reads back, the queue shows released, and CVI rises
+            trail = self.client.get(f"/attestations/{held['id']}/reviews").get_json()
+            self.assertEqual(trail[-1]["verdict"], "release")
+            queue = self.client.get("/attestations/held", headers=auth).get_json()
+            entry = next(a for a in queue if a["id"] == held["id"])
+            self.assertEqual(entry["review_status"], "released")
+            self.assertGreater(self.client.get("/cvi").get_json()["cvi"], cvi_before)
+
+            # the chain is untouched — reviews live in their own table
+            self.assertTrue(self.client.get("/attestations/verify").get_json()["intact"])
+        finally:
+            app_module.auth_registry.admin_users.discard("held-steward")
+
+    def test_reviewing_a_non_held_attestation_conflicts(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("conflict-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "conflict-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            passed = engine.attest("attested", "content", [], 0.95)  # not held
+            resp = self.client.post(
+                f"/attestations/{passed['id']}/review",
+                data=json.dumps({"verdict": "release", "reason": "n/a"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            self.assertEqual(resp.status_code, 409)
+        finally:
+            app_module.auth_registry.admin_users.discard("conflict-steward")
+
     def test_attestations_verify_endpoint_reports_an_intact_chain(self):
         verify = self.client.get("/attestations/verify")
         self.assertEqual(verify.status_code, 200)

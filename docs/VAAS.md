@@ -17,6 +17,14 @@ computational cost of verification, made visible.
 | **Arbiter** | $25,500 | 50 builds / hour | Everything in Attestor + 3-model + rules-engine dissent panels, held-review SLAs |
 | **Sovereign** | $85,000 | unlimited | Everything in Arbiter + on-prem binary distribution, hardware-key (YubiKey) handoff, no source escrow |
 
+The Arbiter **held-review SLA** is a real workflow, not a promise: a steward
+reviews attestations held below the 0.74 threshold and records a `release` or
+`uphold` with a reason (`GET /attestations/held`, `POST
+/attestations/<id>/review`). Reviews are append-only — the held attestation is
+never rewritten, so the tamper-evident chain stays intact — and a documented
+release lifts the item out of the CVI's held ratio. See
+[DECISIONS/0018](../DECISIONS/0018-held-review-workflow.md).
+
 Live tier data: `GET /pricing`. The quota is a **rolling rate limit** enforced
 per named account (`GET /me/quota` reports `used`, `window_seconds`, and
 `resets_at`); usage recovers continuously as builds age out of the window. The

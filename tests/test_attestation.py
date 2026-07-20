@@ -120,6 +120,16 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(report["held_ratio"], 0.5)
         self.assertEqual(report["cvi"], 0.4)
 
+    def test_cvi_credits_reviewed_released_items(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        held = engine.attest("b", "two", [], 0.7)  # held, id 2
+        self.assertEqual(engine.cvi()["held_ratio"], 0.5)
+        # a steward's release lifts it out of the held ratio
+        credited = engine.cvi(released_ids={held["id"]})
+        self.assertEqual(credited["held_ratio"], 0.0)
+        self.assertEqual(credited["cvi"], 0.8)  # no longer discounted
+
     def test_list_preserves_order_and_ids(self):
         engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9)

@@ -24,6 +24,7 @@ from nodes import NodeRegistry
 from planner import Planner
 from plugins import PluginRegistry
 import quotas
+from held_reviews import HeldReviewLog, VERDICTS
 from rules import RulesAdapter, RulesEngine
 from usage import UsageLog
 from review import ReviewEngine
@@ -78,6 +79,7 @@ attestation_engine = AttestationEngine(
 node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
 usage_log = UsageLog(str(service.db_path))
+held_review_log = HeldReviewLog(str(service.db_path))
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
@@ -291,6 +293,67 @@ def list_attestations():
     return jsonify(attestation_engine.list(actor=actor))
 
 
+def _review_status(att_id: int, released: set[int]) -> str:
+    if att_id in released:
+        return "released"
+    return "upheld" if held_review_log.latest_for(att_id) else "pending"
+
+
+@app.route("/attestations/held", methods=["GET"])
+@require_admin
+def list_held_attestations():
+    """Held items awaiting or carrying a steward's decision.
+
+    Each held attestation is annotated with its latest review status —
+    `pending`, `released`, or `upheld` — so the steward sees the queue and its
+    resolutions. Stewardship view: admin only.
+    """
+    released = held_review_log.released_ids()
+    return jsonify(
+        [
+            {
+                **att,
+                "review_status": _review_status(att["id"], released),
+                "latest_review": held_review_log.latest_for(att["id"]),
+            }
+            for att in attestation_engine.held()
+        ]
+    )
+
+
+@app.route("/attestations/<int:att_id>/review", methods=["POST"])
+@require_admin
+def review_held_attestation(att_id: int):
+    """Record a steward's decision on a held attestation — release or uphold.
+
+    Append-only: the review references the held item and never edits it, so the
+    hash chain stays intact. A documented release lifts the item out of the CVI's
+    held ratio; an uphold keeps it held, on the record with a reason.
+    """
+    payload = request.get_json(silent=True) or {}
+    verdict = payload.get("verdict", "")
+    reason = (payload.get("reason") or "").strip()
+
+    att = next((a for a in attestation_engine.list() if a["id"] == att_id), None)
+    if att is None:
+        return jsonify({"error": "attestation not found"}), 404
+    if att["status"] != "held":
+        return jsonify({"error": "attestation is not held"}), 409
+    if verdict not in VERDICTS:
+        return jsonify({"error": f"verdict must be one of {list(VERDICTS)}"}), 400
+    if not reason:
+        return jsonify({"error": "a reason is required"}), 400
+
+    review = held_review_log.record(att_id, g.actor, verdict, reason)
+    usage_log.record(g.actor, "held_review", g.tier, f"{verdict} #{att_id}")
+    return jsonify(review)
+
+
+@app.route("/attestations/<int:att_id>/reviews", methods=["GET"])
+def list_held_reviews(att_id: int):
+    return jsonify(held_review_log.list(att_id))
+
+
 @app.route("/attestations/verify", methods=["GET"])
 def verify_attestations():
     """Confirm the ledger has not been tampered with.
@@ -378,7 +441,7 @@ def export_builds_txt():
 
 @app.route("/cvi", methods=["GET"])
 def composite_verification_index():
-    return jsonify(attestation_engine.cvi())
+    return jsonify(attestation_engine.cvi(released_ids=held_review_log.released_ids()))
 
 
 @app.route("/nodes", methods=["POST"])
@@ -661,13 +724,17 @@ def admin_users():
 def admin_overview():
     builds = service.list_builds()
     attestations = attestation_engine.list()
+    held = attestation_engine.held()
+    released = held_review_log.released_ids()
+    held_pending = len([att for att in held if att["id"] not in released])
     return jsonify(
         {
             "users": len(auth_registry.list_users()),
             "builds": len(builds),
             "attestations": len(attestations),
-            "held": len(attestation_engine.held()),
-            "cvi": attestation_engine.cvi()["cvi"],
+            "held": len(held),
+            "held_pending": held_pending,
+            "cvi": attestation_engine.cvi(released_ids=released)["cvi"],
             "chain": attestation_engine.verify(),
             "checkpoint_policy": attestation_engine.checkpoint_policy,
             "actors": sorted({build["actor"] for build in builds}),
@@ -698,7 +765,11 @@ def my_memory():
 @app.route("/me/cvi", methods=["GET"])
 @require_auth
 def my_cvi():
-    return jsonify(attestation_engine.cvi(actor=g.actor))
+    return jsonify(
+        attestation_engine.cvi(
+            actor=g.actor, released_ids=held_review_log.released_ids()
+        )
+    )
 
 
 @app.route("/me/quota", methods=["GET"])

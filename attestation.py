@@ -439,18 +439,30 @@ class AttestationEngine:
     def held(self) -> list[dict[str, Any]]:
         return self._rows("WHERE status = ?", ("held",))
 
-    def cvi(self, actor: str | None = None) -> dict[str, Any]:
+    def cvi(
+        self, actor: str | None = None, released_ids: set[int] | None = None
+    ) -> dict[str, Any]:
         """Composite Verification Index — evidence-weighted trust, 0.0 to 1.0.
 
         Mean attestation confidence discounted by the held ratio. Scoped to an
         actor when given. An empty record scores 0.0: no evidence, no trust.
+
+        `released_ids` are held attestations a steward has reviewed and released
+        (round 24); they no longer count against the held ratio, so a documented
+        release legitimately lifts the score. The engine takes the release set as
+        a parameter and never learns about reviews directly — default `None`
+        keeps the original behavior exactly.
         """
+        released = released_ids or set()
         scope = self.list(actor)
         total = len(scope)
         if total == 0:
             return {"cvi": 0.0, "samples": 0, "mean_confidence": 0.0, "held_ratio": 0.0}
         mean_confidence = sum(a["confidence"] for a in scope) / total
-        held_ratio = len([a for a in scope if a["status"] == "held"]) / total
+        held = [
+            a for a in scope if a["status"] == "held" and a["id"] not in released
+        ]
+        held_ratio = len(held) / total
         return {
             "cvi": round(mean_confidence * (1 - held_ratio), 3),
             "samples": total,
