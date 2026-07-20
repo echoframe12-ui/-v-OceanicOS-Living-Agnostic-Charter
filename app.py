@@ -3,7 +3,7 @@ import hashlib
 import io
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
@@ -143,6 +143,29 @@ def _windowed_quota(actor: str, tier: str) -> dict:
     return quotas.quota_status(
         tier, used, window_seconds=quotas.WINDOW_SECONDS, resets_at=resets_at
     )
+
+
+def _rate_limit_headers(status: dict, now: datetime | None = None) -> dict[str, str]:
+    """Standard rate-limit headers from a quota status.
+
+    Finite tiers emit `X-RateLimit-Limit`/`-Remaining` (and `-Reset` as a unix
+    timestamp once the window has an oldest build to age out). An exceeded quota
+    adds `Retry-After` in seconds. Unlimited tiers (sovereign) emit nothing —
+    there is no ceiling to report.
+    """
+    if status["limit"] is None:
+        return {}
+    now = now or datetime.now(timezone.utc)
+    headers = {
+        "X-RateLimit-Limit": str(status["limit"]),
+        "X-RateLimit-Remaining": str(status["remaining"]),
+    }
+    if status["resets_at"]:
+        reset = datetime.fromisoformat(status["resets_at"])
+        headers["X-RateLimit-Reset"] = str(int(reset.timestamp()))
+        if status["exceeded"]:
+            headers["Retry-After"] = str(max(0, int((reset - now).total_seconds())))
+    return headers
 
 
 def require_auth(view):
@@ -732,25 +755,28 @@ def run_builder():
         status = _windowed_quota(g.actor, g.tier)
         if status["exceeded"]:
             usage_log.record(g.actor, "quota_exceeded", g.tier, task)
-            return (
-                jsonify(
-                    {
-                        "error": "quota exceeded",
-                        "tier": status["tier"],
-                        "limit": status["limit"],
-                        "used": status["used"],
-                        "window_seconds": status["window_seconds"],
-                        "resets_at": status["resets_at"],
-                    }
-                ),
-                429,
+            resp = jsonify(
+                {
+                    "error": "quota exceeded",
+                    "tier": status["tier"],
+                    "limit": status["limit"],
+                    "used": status["used"],
+                    "window_seconds": status["window_seconds"],
+                    "resets_at": status["resets_at"],
+                }
             )
+            resp.headers.extend(_rate_limit_headers(status))
+            return resp, 429
 
     result = builder.run(task, context, actor=g.actor)
     usage_log.record(g.actor, "build", g.tier, task)
     _snapshot_cvi()
     result["dashboard"] = dashboard.summary()
-    return jsonify(result)
+    resp = jsonify(result)
+    if g.actor != ANONYMOUS:
+        # recompute after the build so Remaining reflects the slot just consumed
+        resp.headers.extend(_rate_limit_headers(_windowed_quota(g.actor, g.tier)))
+    return resp
 
 
 @app.route("/builder/history", methods=["GET"])
@@ -879,7 +905,10 @@ def my_cvi():
 @app.route("/me/quota", methods=["GET"])
 @require_auth
 def my_quota():
-    return jsonify(_windowed_quota(g.actor, g.tier))
+    status = _windowed_quota(g.actor, g.tier)
+    resp = jsonify(status)
+    resp.headers.extend(_rate_limit_headers(status))
+    return resp
 
 
 @app.route("/me/usage", methods=["GET"])

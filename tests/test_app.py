@@ -665,6 +665,10 @@ class OceanicOSAppTests(unittest.TestCase):
                 headers=auth,
             )
             self.assertEqual(first.status_code, 200)
+            # a successful build carries standard rate-limit headers, remaining
+            # reflecting the slot just consumed (limit 1 -> 0 left)
+            self.assertEqual(first.headers.get("X-RateLimit-Limit"), "1")
+            self.assertEqual(first.headers.get("X-RateLimit-Remaining"), "0")
 
             blocked = self.client.post(
                 "/builder/run",
@@ -678,6 +682,33 @@ class OceanicOSAppTests(unittest.TestCase):
             self.assertEqual(body["tier"], "attestor")
             self.assertEqual(body["window_seconds"], quotas.WINDOW_SECONDS)
             self.assertIsNotNone(body["resets_at"])
+            # the 429 tells the client when to come back
+            self.assertEqual(blocked.headers.get("X-RateLimit-Remaining"), "0")
+            self.assertIsNotNone(blocked.headers.get("Retry-After"))
+            self.assertGreaterEqual(int(blocked.headers["Retry-After"]), 0)
+
+    def test_unlimited_tier_emits_no_rate_limit_headers(self):
+        app_module.auth_registry.admin_users.add("sov-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register", data=json.dumps({"username": "sov-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            sov = self.client.post(
+                "/auth/register", data=json.dumps({"username": "sov-user"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            # promote the existing user; the token is unchanged by a tier change
+            self.client.post(
+                "/admin/users/sov-user/tier", data=json.dumps({"tier": "sovereign"}),
+                content_type="application/json",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            resp = self.client.get("/me/quota", headers={"Authorization": f"Bearer {sov}"})
+            self.assertIsNone(resp.get_json()["limit"])  # unlimited
+            self.assertIsNone(resp.headers.get("X-RateLimit-Limit"))  # no ceiling to report
+        finally:
+            app_module.auth_registry.admin_users.discard("sov-steward")
 
     def test_admin_can_promote_a_users_tier(self):
         app_module.auth_registry.admin_users.add("tier-steward")
