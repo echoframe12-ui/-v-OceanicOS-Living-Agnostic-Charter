@@ -8,6 +8,7 @@ from attestation import (
     CONFIDENCE_THRESHOLD,
     GENESIS_HASH,
     AttestationEngine,
+    checkpoint_signature,
     consensus_delta,
     link_hash,
     score_confidence,
@@ -270,6 +271,55 @@ class SignedCheckpointTests(unittest.TestCase):
         self.assertFalse(report["checkpoint"]["head_reproduced"])
         self.assertTrue(report["checkpoint"]["signature_valid"])
         self.assertFalse(report["trustworthy"])
+
+    def test_list_checkpoints_returns_every_seal_in_order(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("a", "one", [], 0.9)
+        first = engine.checkpoint()
+        engine.attest("b", "two", [], 0.9)
+        second = engine.checkpoint()
+        checkpoints = engine.list_checkpoints()
+        self.assertEqual([cp["id"] for cp in checkpoints], [first["id"], second["id"]])
+        self.assertEqual(checkpoints[-1]["length"], 2)
+
+
+class ExportTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_export_carries_the_whole_sealed_record(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("a", "one", ["plan"], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        engine.checkpoint()
+        bundle = engine.export()
+        self.assertEqual(bundle["version"], 1)
+        self.assertEqual(bundle["genesis"], GENESIS_HASH)
+        self.assertIn("exported_at", bundle)
+        self.assertEqual(len(bundle["attestations"]), 2)
+        self.assertEqual(len(bundle["checkpoints"]), 1)
+        self.assertEqual(bundle["attestations"][0]["sources"], ["plan"])
+
+    def test_export_of_an_empty_ledger_is_well_formed(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        bundle = engine.export()
+        self.assertEqual(bundle["attestations"], [])
+        self.assertEqual(bundle["checkpoints"], [])
+
+
+class CheckpointSignatureTests(unittest.TestCase):
+    def test_signature_is_deterministic_and_sensitive_to_key_head_and_length(self):
+        base = checkpoint_signature("key", "abc", 3)
+        self.assertEqual(base, checkpoint_signature("key", "abc", 3))
+        self.assertNotEqual(base, checkpoint_signature("other-key", "abc", 3))
+        self.assertNotEqual(base, checkpoint_signature("key", "abcd", 3))
+        self.assertNotEqual(base, checkpoint_signature("key", "abc", 4))
 
 
 class LinkHashTests(unittest.TestCase):

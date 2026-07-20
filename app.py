@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import io
+import json
 import os
 from datetime import datetime, timedelta
 from functools import wraps
@@ -298,6 +299,23 @@ def checkpoint_attestations():
         return jsonify({"error": str(exc)}), 409
 
 
+@app.route("/attestations/export", methods=["GET"])
+def export_attestations():
+    """The whole sealed attestation record as a portable, offline-verifiable bundle.
+
+    Carries every attestation and checkpoint so the chain and its seals can be
+    checked with `verify_ledger.py` — no service, no database. The ground truth
+    survives the system.
+    """
+    return Response(
+        json.dumps(attestation_engine.export(), indent=2),
+        mimetype="application/json",
+        headers={
+            "Content-Disposition": "attachment; filename=oceanicos-attestations.json"
+        },
+    )
+
+
 @app.route("/builds/export", methods=["GET"])
 def export_builds():
     buffer = io.StringIO()
@@ -365,7 +383,12 @@ def pricing():
                 {
                     "name": "Attestor",
                     "price": 8500,
-                    "includes": ["attestation API", "CVI", "csv/txt ledger exports"],
+                    "includes": [
+                        "attestation API",
+                        "CVI",
+                        "csv/txt ledger exports",
+                        "verifiable attestation export",
+                    ],
                 },
                 {
                     "name": "Arbiter",

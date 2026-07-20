@@ -118,6 +118,7 @@ Use the endpoints:
 - GET /attestations
 - GET /attestations/verify
 - POST /attestations/checkpoint
+- GET /attestations/export
 - GET /cvi
 - POST /nodes
 - GET /nodes
@@ -247,6 +248,7 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - `GET /cvi` reports the Composite Verification Index — mean attestation confidence discounted by the held ratio; no evidence scores 0.0.
 - `GET /attestations/verify` walks the attestation hash chain and reports whether the ledger is intact — the record attests to itself. Each attestation carries the previous entry's hash and its own, so any retroactive edit breaks the chain and the walk returns the id of the first broken link (see [DECISIONS/0011](DECISIONS/0011-tamper-evident-ledger.md)). It also validates the latest signed checkpoint: `trustworthy` is true only when the chain is intact, the sealed head is still reproduced, and its signature validates under the current key.
 - `POST /attestations/checkpoint` (admin) seals the current chain head with an HMAC signature keyed by `OCEANICOS_SIGNING_KEY` — a secret that never touches the database. This raises the bar from tamper-*evident* to tamper-*resistant*: an attacker who rewrites the ledger and recomputes the chain forward still can't forge a checkpoint matching their new head without the key, so `verify` reports `trustworthy: false` (see [DECISIONS/0012](DECISIONS/0012-signed-checkpoints.md)). Returns 503 if no key is configured, 409 if the chain is already broken.
+- `GET /attestations/export` returns the whole sealed record — every attestation and checkpoint — as a self-contained JSON bundle. The standalone `verify_ledger.py` re-walks that bundle **offline**, with no service, database, or engine (`python verify_ledger.py --key <key> bundle.json`; exit 0 when intact and, with the key, trustworthy). Trust in the record becomes portable, not service-bound — the attestation ledger's answer to "the ground truth survives without the system" (see [DECISIONS/0013](DECISIONS/0013-portable-verifiable-export.md)).
 - `POST /models/consensus` convenes a 3-adapter dissent panel.
 - `GET /observer` reports the root process: stateless, sole read/write head, sigil checksum `0xΩ∞v`, and a real SHA-256 of the constitution.
 - The platform is offered commercially as Verification-as-a-Service — see [docs/VAAS.md](docs/VAAS.md) and `GET /pricing`.

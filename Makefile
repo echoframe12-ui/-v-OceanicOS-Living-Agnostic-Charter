@@ -2,7 +2,7 @@
 IMAGE ?= oceanicos
 PORT ?= 5000
 
-.PHONY: help install test run build docker-build docker-run stack clean
+.PHONY: help install test run build docker-build docker-run stack verify-ledger clean
 
 help:
 	@echo "OceanicOS full-stack targets:"
@@ -12,6 +12,7 @@ help:
 	@echo "  make docker-build  build the container image ($(IMAGE))"
 	@echo "  make docker-run    run the container image"
 	@echo "  make stack         test -> docker-build -> docker-run (the full stack)"
+	@echo "  make verify-ledger verify an exported ledger offline (BUNDLE=path [KEY=secret])"
 	@echo "  make clean         remove local db, workspace, and caches"
 
 install:
@@ -36,6 +37,11 @@ docker-run:
 # The full stack: verify, containerize, launch.
 stack: test docker-build
 	@echo "Stack built. Launch with: make docker-run"
+
+# Verify an exported attestation ledger offline — the ground truth without the system.
+# Usage: make verify-ledger BUNDLE=bundle.json [KEY=your-signing-key]
+verify-ledger:
+	python verify_ledger.py $(if $(KEY),--key $(KEY),) "$(BUNDLE)"
 
 clean:
 	rm -f oceanicos.db *.sqlite3

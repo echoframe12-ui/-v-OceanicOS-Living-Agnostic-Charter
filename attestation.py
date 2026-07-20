@@ -44,6 +44,19 @@ def link_hash(prev_hash: str, entry: dict[str, Any]) -> str:
     return hashlib.sha256((prev_hash + payload).encode()).hexdigest()
 
 
+def checkpoint_signature(key: str, head_hash: str, length: int) -> str:
+    """The HMAC that seals a chain head at a given length.
+
+    A module-level pure function so the running engine and the standalone
+    offline verifier compute the signature the same way — one source of truth,
+    exactly as `link_hash` is for the chain itself. The key is an operator
+    secret held outside the ledger; without it, the signature cannot be forged.
+    """
+    return hmac.new(
+        key.encode(), f"{head_hash}:{length}".encode(), hashlib.sha256
+    ).hexdigest()
+
+
 def consensus_delta(verdicts: list[str]) -> float:
     """Confidence adjustment from a dissent panel's verdicts.
 
@@ -260,10 +273,8 @@ class AttestationEngine:
         """Whether a signing key is configured. No key, no signed checkpoints."""
         return bool(self._signing_key)
 
-    def _sign(self, payload: str) -> str:
-        return hmac.new(
-            self._signing_key.encode(), payload.encode(), hashlib.sha256
-        ).hexdigest()
+    def _sign(self, head_hash: str, length: int) -> str:
+        return checkpoint_signature(self._signing_key, head_hash, length)
 
     def checkpoint(self) -> dict[str, Any]:
         """Seal the current chain head with a signature the key-holder alone can make.
@@ -285,7 +296,7 @@ class AttestationEngine:
         head = report["head"]
         length = report["length"]
         created_at = datetime.now(timezone.utc).isoformat()
-        signature = self._sign(f"{head}:{length}")
+        signature = self._sign(head, length)
         with sqlite3.connect(self._db_path) as conn:
             cursor = conn.execute(
                 "INSERT INTO attestation_checkpoints (head_hash, length, created_at, signature) "
@@ -301,20 +312,25 @@ class AttestationEngine:
         }
 
     def latest_checkpoint(self) -> dict[str, Any] | None:
+        checkpoints = self.list_checkpoints()
+        return checkpoints[-1] if checkpoints else None
+
+    def list_checkpoints(self) -> list[dict[str, Any]]:
         with sqlite3.connect(self._db_path) as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 "SELECT id, head_hash, length, created_at, signature "
-                "FROM attestation_checkpoints ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row[0],
-            "head_hash": row[1],
-            "length": row[2],
-            "created_at": row[3],
-            "signature": row[4],
-        }
+                "FROM attestation_checkpoints ORDER BY id"
+            ).fetchall()
+        return [
+            {
+                "id": row[0],
+                "head_hash": row[1],
+                "length": row[2],
+                "created_at": row[3],
+                "signature": row[4],
+            }
+            for row in rows
+        ]
 
     def verify(self) -> dict[str, Any]:
         """Full integrity report: the chain walk plus the signed checkpoint.
@@ -336,7 +352,7 @@ class AttestationEngine:
             and rows[cp["length"] - 1]["entry_hash"] == cp["head_hash"]
         ) or (cp["length"] == 0 and cp["head_hash"] == GENESIS_HASH)
         signature_valid = self.can_sign and hmac.compare_digest(
-            cp["signature"], self._sign(f"{cp['head_hash']}:{cp['length']}")
+            cp["signature"], self._sign(cp["head_hash"], cp["length"])
         )
         return {
             **chain,
@@ -351,6 +367,23 @@ class AttestationEngine:
             "trustworthy": bool(
                 chain["intact"] and head_reproduced and signature_valid
             ),
+        }
+
+    def export(self) -> dict[str, Any]:
+        """The whole sealed record as a self-contained, portable bundle.
+
+        Carries every attestation and every checkpoint, so the chain and its
+        seals can be verified offline — by `verify_ledger.py` — with no service,
+        no database, and no engine. This is the attestation ledger's answer to
+        the platform's own principle that the ground truth should survive the
+        system: trust in the record becomes portable, not service-bound.
+        """
+        return {
+            "version": 1,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "genesis": GENESIS_HASH,
+            "attestations": self.list(),
+            "checkpoints": self.list_checkpoints(),
         }
 
     def list(self, actor: str | None = None) -> list[dict[str, Any]]:

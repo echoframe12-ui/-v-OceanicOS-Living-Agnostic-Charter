@@ -275,6 +275,15 @@ class OceanicOSAppTests(unittest.TestCase):
             engine._signing_key = original_key
             app_module.auth_registry.admin_users.discard("keyless-steward")
 
+    def test_attestations_export_returns_a_portable_bundle(self):
+        export = self.client.get("/attestations/export")
+        self.assertEqual(export.status_code, 200)
+        self.assertIn("application/json", export.content_type)
+        bundle = export.get_json()
+        self.assertEqual(bundle["version"], 1)
+        self.assertIn("attestations", bundle)
+        self.assertIn("checkpoints", bundle)
+
     def test_vaas_endpoints(self):
         cvi = self.client.get("/cvi")
         self.assertEqual(cvi.status_code, 200)
