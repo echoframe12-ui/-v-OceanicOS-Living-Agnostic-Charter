@@ -62,7 +62,9 @@ decision_registry = DecisionRegistry()
 artifact_registry = ArtifactRegistry()
 dashboard = Dashboard()
 plugin_registry = PluginRegistry()
-attestation_engine = AttestationEngine(str(service.db_path))
+attestation_engine = AttestationEngine(
+    str(service.db_path), signing_key=os.getenv("OCEANICOS_SIGNING_KEY", "")
+)
 node_registry = NodeRegistry()
 auth_registry = AuthRegistry()
 usage_log = UsageLog(str(service.db_path))
@@ -268,12 +270,32 @@ def list_attestations():
 
 @app.route("/attestations/verify", methods=["GET"])
 def verify_attestations():
-    """Confirm the ledger has not been retroactively edited.
+    """Confirm the ledger has not been tampered with.
 
-    The record attests to itself: this walks the hash chain and reports whether
-    it is intact, and if not, the first broken link.
+    Walks the hash chain (edit-in-place detection) and checks the latest signed
+    checkpoint (whole-rewrite detection): a record is trustworthy only when the
+    chain is intact, its signed head is still reproduced, and the signature
+    validates under the current key.
     """
-    return jsonify(attestation_engine.verify_chain())
+    return jsonify(attestation_engine.verify())
+
+
+@app.route("/attestations/checkpoint", methods=["POST"])
+@require_admin
+def checkpoint_attestations():
+    """Seal the current chain head with an operator-key signature.
+
+    Requires OCEANICOS_SIGNING_KEY. Refuses to seal an already-broken chain.
+    """
+    if not attestation_engine.can_sign:
+        return (
+            jsonify({"error": "no signing key configured (set OCEANICOS_SIGNING_KEY)"}),
+            503,
+        )
+    try:
+        return jsonify(attestation_engine.checkpoint())
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 409
 
 
 @app.route("/builds/export", methods=["GET"])
@@ -580,7 +602,7 @@ def admin_overview():
             "attestations": len(attestations),
             "held": len(attestation_engine.held()),
             "cvi": attestation_engine.cvi()["cvi"],
-            "chain": attestation_engine.verify_chain(),
+            "chain": attestation_engine.verify(),
             "actors": sorted({build["actor"] for build in builds}),
             "usage": usage_log.summary()["by_action"],
         }

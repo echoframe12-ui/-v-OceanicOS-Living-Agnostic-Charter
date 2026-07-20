@@ -184,6 +184,94 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertTrue(worker_a.verify_chain()["intact"])
 
 
+class SignedCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_checkpoint_requires_a_signing_key(self):
+        engine = AttestationEngine(self.db_path, signing_key="")
+        self.assertFalse(engine.can_sign)
+        engine.attest("a", "one", [], 0.9)
+        with self.assertRaises(RuntimeError):
+            engine.checkpoint()
+
+    def test_checkpoint_seals_and_verifies_the_head(self):
+        engine = AttestationEngine(self.db_path, signing_key="operator-secret")
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        cp = engine.checkpoint()
+        report = engine.verify()
+        self.assertTrue(report["trustworthy"])
+        self.assertTrue(report["checkpoint"]["signature_valid"])
+        self.assertTrue(report["checkpoint"]["head_reproduced"])
+        self.assertEqual(report["checkpoint"]["length"], 2)
+        self.assertEqual(cp["head_hash"], report["head"])
+
+    def test_checkpoint_refuses_a_broken_chain(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("a", "one", [], 0.9)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE attestations SET confidence = 0.1 WHERE id = 1")
+        with self.assertRaises(RuntimeError):
+            engine.checkpoint()
+
+    def test_verify_without_a_checkpoint_reports_uncheckpointed(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("a", "one", [], 0.9)
+        report = engine.verify()
+        self.assertFalse(report["checkpointed"])
+        self.assertNotIn("trustworthy", report)
+
+    def test_wrong_key_fails_signature_validation(self):
+        signer = AttestationEngine(self.db_path, signing_key="the-real-key")
+        signer.attest("a", "one", [], 0.9)
+        signer.checkpoint()
+        # a verifier holding the wrong key cannot validate the signature
+        impostor = AttestationEngine(self.db_path, signing_key="a-different-key")
+        report = impostor.verify()
+        self.assertFalse(report["checkpoint"]["signature_valid"])
+        self.assertFalse(report["trustworthy"])
+
+    def test_checkpoint_catches_a_recomputed_forward_rewrite(self):
+        # The whole point of signing: an attacker rewrites a past entry AND
+        # recomputes every later hash so the chain is internally consistent —
+        # verify_chain alone would pass. The signed checkpoint still catches it,
+        # because the new head no longer matches the sealed one and the attacker
+        # cannot forge a signature over their forged head without the key.
+        engine = AttestationEngine(self.db_path, signing_key="operator-secret")
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        engine.checkpoint()  # seals head over length 2
+
+        # attacker rewrites row 1 and rebuilds the chain forward, honestly
+        rows = engine.list()
+        rows[0]["subject"] = "tampered"
+        prev = GENESIS_HASH
+        with sqlite3.connect(self.db_path) as conn:
+            for row in rows:
+                new_entry_hash = link_hash(prev, row)
+                conn.execute(
+                    "UPDATE attestations SET subject = ?, prev_hash = ?, entry_hash = ? WHERE id = ?",
+                    (row["subject"], prev, new_entry_hash, row["id"]),
+                )
+                prev = new_entry_hash
+
+        report = engine.verify()
+        # the chain looks internally consistent to the walk...
+        self.assertTrue(report["intact"])
+        # ...but the sealed head is no longer reproduced, and the signature over
+        # it still validates — so the tamper is caught and trust is withdrawn
+        self.assertFalse(report["checkpoint"]["head_reproduced"])
+        self.assertTrue(report["checkpoint"]["signature_valid"])
+        self.assertFalse(report["trustworthy"])
+
+
 class LinkHashTests(unittest.TestCase):
     def test_link_hash_is_deterministic_and_prev_sensitive(self):
         entry = {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -110,8 +111,11 @@ class AttestationEngine:
         "sources, created_at, prev_hash, entry_hash"
     )
 
-    def __init__(self, db_path: str | None = None) -> None:
+    def __init__(self, db_path: str | None = None, signing_key: str | None = None) -> None:
         self._db_path = Path(db_path or os.getenv("OCEANICOS_DB", "oceanicos.db"))
+        self._signing_key = (
+            signing_key if signing_key is not None else os.getenv("OCEANICOS_SIGNING_KEY", "")
+        )
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
                 """
@@ -127,6 +131,17 @@ class AttestationEngine:
                     created_at TEXT NOT NULL,
                     prev_hash TEXT NOT NULL DEFAULT '',
                     entry_hash TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS attestation_checkpoints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    head_hash TEXT NOT NULL,
+                    length INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    signature TEXT NOT NULL
                 )
                 """
             )
@@ -239,6 +254,104 @@ class AttestationEngine:
                 return {"intact": False, "length": len(rows), "broken_at": entry["id"]}
             prev_hash = entry["entry_hash"]
         return {"intact": True, "length": len(rows), "broken_at": None, "head": prev_hash}
+
+    @property
+    def can_sign(self) -> bool:
+        """Whether a signing key is configured. No key, no signed checkpoints."""
+        return bool(self._signing_key)
+
+    def _sign(self, payload: str) -> str:
+        return hmac.new(
+            self._signing_key.encode(), payload.encode(), hashlib.sha256
+        ).hexdigest()
+
+    def checkpoint(self) -> dict[str, Any]:
+        """Seal the current chain head with a signature the key-holder alone can make.
+
+        A checkpoint is an HMAC over the head hash and length, keyed by an
+        operator secret that never touches the database. It raises the bar from
+        tamper-*evident* to tamper-*resistant*: an attacker who rewrites the
+        ledger and recomputes the chain forward still cannot forge a checkpoint
+        that matches their new head without the key. Refuses to seal a chain
+        that is already broken — a checkpoint should only ever bless the truth.
+        """
+        if not self._signing_key:
+            raise RuntimeError("no signing key configured (set OCEANICOS_SIGNING_KEY)")
+        report = self.verify_chain()
+        if not report["intact"]:
+            raise RuntimeError(
+                f"refusing to checkpoint a broken chain (first break at {report['broken_at']})"
+            )
+        head = report["head"]
+        length = report["length"]
+        created_at = datetime.now(timezone.utc).isoformat()
+        signature = self._sign(f"{head}:{length}")
+        with sqlite3.connect(self._db_path) as conn:
+            cursor = conn.execute(
+                "INSERT INTO attestation_checkpoints (head_hash, length, created_at, signature) "
+                "VALUES (?, ?, ?, ?)",
+                (head, length, created_at, signature),
+            )
+        return {
+            "id": cursor.lastrowid,
+            "head_hash": head,
+            "length": length,
+            "created_at": created_at,
+            "signature": signature,
+        }
+
+    def latest_checkpoint(self) -> dict[str, Any] | None:
+        with sqlite3.connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT id, head_hash, length, created_at, signature "
+                "FROM attestation_checkpoints ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "head_hash": row[1],
+            "length": row[2],
+            "created_at": row[3],
+            "signature": row[4],
+        }
+
+    def verify(self) -> dict[str, Any]:
+        """Full integrity report: the chain walk plus the signed checkpoint.
+
+        `verify_chain` proves the record wasn't edited in place. The checkpoint
+        proves it wasn't rewritten wholesale: even a fully-recomputed forward
+        chain fails here, because its head no longer matches the signed head and
+        only the key-holder can sign a new one. A record is trustworthy when the
+        chain is intact, a checkpoint exists, its head is still reproduced, and
+        its signature validates under the current key.
+        """
+        chain = self.verify_chain()
+        cp = self.latest_checkpoint()
+        if cp is None:
+            return {**chain, "checkpointed": False}
+        rows = self._rows()
+        head_reproduced = (
+            len(rows) >= cp["length"] > 0
+            and rows[cp["length"] - 1]["entry_hash"] == cp["head_hash"]
+        ) or (cp["length"] == 0 and cp["head_hash"] == GENESIS_HASH)
+        signature_valid = self.can_sign and hmac.compare_digest(
+            cp["signature"], self._sign(f"{cp['head_hash']}:{cp['length']}")
+        )
+        return {
+            **chain,
+            "checkpointed": True,
+            "checkpoint": {
+                "head_hash": cp["head_hash"],
+                "length": cp["length"],
+                "created_at": cp["created_at"],
+                "signature_valid": signature_valid,
+                "head_reproduced": head_reproduced,
+            },
+            "trustworthy": bool(
+                chain["intact"] and head_reproduced and signature_valid
+            ),
+        }
 
     def list(self, actor: str | None = None) -> list[dict[str, Any]]:
         if actor is None:

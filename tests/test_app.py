@@ -216,6 +216,65 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertTrue(report["intact"])
         self.assertIsNone(report["broken_at"])
 
+    def test_checkpoint_endpoint_seals_and_verify_reflects_it(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("chain-steward")
+        original_key = engine._signing_key
+        engine._signing_key = "test-signing-key"
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "chain-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "chain-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            # sealing the chain is an admin-only act
+            forbidden = self.client.post(
+                "/attestations/checkpoint",
+                headers={"Authorization": f"Bearer {member}"},
+            )
+            self.assertEqual(forbidden.status_code, 403)
+
+            sealed = self.client.post(
+                "/attestations/checkpoint",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            self.assertEqual(sealed.status_code, 200)
+            self.assertIn("signature", sealed.get_json())
+
+            report = self.client.get("/attestations/verify").get_json()
+            self.assertTrue(report["checkpointed"])
+            self.assertTrue(report["checkpoint"]["signature_valid"])
+            self.assertTrue(report["trustworthy"])
+        finally:
+            engine._signing_key = original_key
+            app_module.auth_registry.admin_users.discard("chain-steward")
+
+    def test_checkpoint_without_a_key_is_unavailable(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("keyless-steward")
+        original_key = engine._signing_key
+        engine._signing_key = ""
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "keyless-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            resp = self.client.post(
+                "/attestations/checkpoint",
+                headers={"Authorization": f"Bearer {admin}"},
+            )
+            self.assertEqual(resp.status_code, 503)
+        finally:
+            engine._signing_key = original_key
+            app_module.auth_registry.admin_users.discard("keyless-steward")
+
     def test_vaas_endpoints(self):
         cvi = self.client.get("/cvi")
         self.assertEqual(cvi.status_code, 200)
