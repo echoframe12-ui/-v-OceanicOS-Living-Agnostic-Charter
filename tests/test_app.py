@@ -207,6 +207,20 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(len(payload["verdicts"]), len(payload["adapters"]))
         self.assertIn(payload["majority"], ("approve", "revise"))
         self.assertTrue(payload["dissent"])
+        # the rules engine sits on the panel as the deterministic anchor
+        self.assertIn("rules-engine", payload["adapters"])
+
+    def test_rules_evaluate_endpoint_explains_itself(self):
+        response = self.client.post(
+            "/rules/evaluate",
+            data=json.dumps({"prompt": "build everything"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["verdict"], "revise")
+        self.assertIn("unbounded_scope", payload["fired"])
+        self.assertTrue(payload["reasons"])  # the reason travels with the verdict
 
     def test_attestations_verify_endpoint_reports_an_intact_chain(self):
         verify = self.client.get("/attestations/verify")

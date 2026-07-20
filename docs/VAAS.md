@@ -14,7 +14,7 @@ computational cost of verification, made visible.
 | Tier | Price | Build quota | Includes |
 | --- | --- | --- | --- |
 | **Attestor** | $8,500 | 10 builds / hour | Attestation API, Composite Verification Index (CVI), CSV/.txt ledger exports |
-| **Arbiter** | $25,500 | 50 builds / hour | Everything in Attestor + 3-adapter dissent panels, held-review SLAs |
+| **Arbiter** | $25,500 | 50 builds / hour | Everything in Attestor + 3-model + rules-engine dissent panels, held-review SLAs |
 | **Sovereign** | $85,000 | unlimited | Everything in Arbiter + on-prem binary distribution, hardware-key (YubiKey) handoff, no source escrow |
 
 Live tier data: `GET /pricing`. The quota is a **rolling rate limit** enforced

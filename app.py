@@ -24,6 +24,7 @@ from nodes import NodeRegistry
 from planner import Planner
 from plugins import PluginRegistry
 import quotas
+from rules import RulesAdapter, RulesEngine
 from usage import UsageLog
 from review import ReviewEngine
 from server import OceanicOSService
@@ -58,6 +59,10 @@ model_router.register(
 claude_adapter = create_claude_adapter(keywords=["claude"])
 if claude_adapter is not None:
     model_router.register(claude_adapter)
+# The deterministic anchor: a rules engine that always weighs in and explains
+# itself — "3 competing LLMs + 1 rules engine" from the manifest, made real.
+rules_engine = RulesEngine()
+model_router.register(RulesAdapter(rules_engine))
 agent_loop = AgentLoop()
 state_snapshot = StateSnapshot()
 review_engine = ReviewEngine()
@@ -264,7 +269,20 @@ def route_model():
 def model_consensus():
     payload = request.get_json(silent=True) or {}
     prompt = payload.get("prompt", "")
-    return jsonify(model_router.route_all(prompt, panel=3))
+    # panel of 4: the three model heuristics plus the rules engine anchor
+    return jsonify(model_router.route_all(prompt, panel=4))
+
+
+@app.route("/rules/evaluate", methods=["POST"])
+def rules_evaluate():
+    """The rules engine's explainable verdict — which rules fired, and why.
+
+    The panel member you can audit: unlike the model heuristics, this returns
+    the named rules that triggered a revise and the reason each exists.
+    """
+    payload = request.get_json(silent=True) or {}
+    prompt = payload.get("prompt", "")
+    return jsonify(rules_engine.evaluate(prompt))
 
 
 @app.route("/attestations", methods=["GET"])
@@ -397,7 +415,7 @@ def pricing():
                 {
                     "name": "Arbiter",
                     "price": 25500,
-                    "includes": ["everything in Attestor", "3-adapter dissent panels", "held-review SLAs"],
+                    "includes": ["everything in Attestor", "3-model + rules-engine dissent panels", "held-review SLAs"],
                 },
                 {
                     "name": "Sovereign",

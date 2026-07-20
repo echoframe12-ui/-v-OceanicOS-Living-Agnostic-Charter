@@ -70,12 +70,20 @@ class ModelRouter:
         self._adapters.append(adapter)
 
     def route(self, prompt: str) -> dict[str, Any]:
+        """Pick a single primary adapter by keyword match.
+
+        Panel-only members (e.g. the rules engine, which weighs in on every
+        panel) are never chosen as the sole primary route — they anchor
+        consensus, they don't answer alone.
+        """
         if not self._adapters:
             raise ValueError("No adapters registered")
-        for adapter in self._adapters:
+        primary = [a for a in self._adapters if not getattr(a, "panel_only", False)]
+        for adapter in primary:
             if adapter.matches(prompt):
                 return adapter.generate(prompt)
-        return self._adapters[0].generate(prompt)
+        fallback = primary or self._adapters
+        return fallback[0].generate(prompt)
 
     def route_all(self, prompt: str, panel: int | None = None) -> dict[str, Any]:
         """Run every matching adapter and surface disagreement as the output.

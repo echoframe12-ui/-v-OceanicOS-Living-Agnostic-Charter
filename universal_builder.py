@@ -89,7 +89,9 @@ class UniversalBuilder:
         stages.append("workflow")
 
         model_result = self.model_router.route(task)
-        consensus = self.model_router.route_all(task, panel=3)
+        # panel of 4 when the router is fully staffed: the model heuristics plus
+        # the rules-engine anchor. Falls back gracefully on smaller routers.
+        consensus = self.model_router.route_all(task, panel=4)
         stages.append("route")
 
         agent_result = self.agent_loop.run(task, context)
