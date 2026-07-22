@@ -456,6 +456,37 @@ class AttestationEngine:
             ),
         }
 
+    def receipt(self, att_id: int) -> dict[str, Any] | None:
+        """A verification receipt for one attestation — the proof a client presents.
+
+        Locates the attestation, its height in the chain, whether the chain is
+        intact, and whether a signed checkpoint seals its position (its height is
+        within a checkpoint's sealed length). This is the per-item answer to
+        "prove this was verified": the content hash, its place in the chain, and
+        whether that place is under a signature. Returns None for a missing id.
+        """
+        rows = self._rows()
+        entry = None
+        position = 0
+        for index, row in enumerate(rows, start=1):
+            if row["id"] == att_id:
+                entry = row
+                position = index
+                break
+        if entry is None:
+            return None
+        cp = self.latest_checkpoint()
+        return {
+            "attestation": entry,
+            "chain_position": position,
+            "chain_length": len(rows),
+            "chain_intact": self.verify_chain()["intact"],
+            "sealed": cp is not None and position <= cp["length"],
+            "checkpoint": (
+                {"length": cp["length"], "created_at": cp["created_at"]} if cp else None
+            ),
+        }
+
     def export(self) -> dict[str, Any]:
         """The whole sealed record as a self-contained, portable bundle.
 
@@ -481,6 +512,18 @@ class AttestationEngine:
     def held(self) -> list[dict[str, Any]]:
         return self._rows("WHERE status = ?", ("held",))
 
+    def by_content_hash(self, sha256: str) -> list[dict[str, Any]]:
+        """Attestations of a given content hash — content-addressable lookup.
+
+        The ledger hashes every content on the way in; this finds it on the way
+        back. A caller holding an output can recompute its sha256 and ask the
+        record whether that exact content was attested, and with what confidence
+        — closing the loop from attestation to later verification of the artifact
+        itself. Returns every match (the same content may be attested more than
+        once), newest last.
+        """
+        return self._rows("WHERE sha256 = ?", (sha256,))
+
     def cvi(
         self, actor: str | None = None, released_ids: set[int] | None = None
     ) -> dict[str, Any]:
@@ -499,8 +542,19 @@ class AttestationEngine:
         scope = self.list(actor)
         total = len(scope)
         if total == 0:
-            return {"cvi": 0.0, "samples": 0, "mean_confidence": 0.0, "held_ratio": 0.0}
-        mean_confidence = sum(a["confidence"] for a in scope) / total
+            return {
+                "cvi": 0.0,
+                "samples": 0,
+                "mean_confidence": 0.0,
+                "held_ratio": 0.0,
+                "confidence_interval": [0.0, 0.0],
+            }
+        confidences = [a["confidence"] for a in scope]
+        mean_confidence = sum(confidences) / total
+        # population standard deviation of the confidence sample — the spread the
+        # mean hides. The interval is mean ± std, so the headline carries its own
+        # uncertainty: wide when the record disagrees, a point when it's uniform.
+        std = (sum((c - mean_confidence) ** 2 for c in confidences) / total) ** 0.5
         held = [
             a for a in scope if a["status"] == "held" and a["id"] not in released
         ]
@@ -510,4 +564,57 @@ class AttestationEngine:
             "samples": total,
             "mean_confidence": round(mean_confidence, 3),
             "held_ratio": round(held_ratio, 3),
+            "confidence_interval": [
+                round(max(0.0, mean_confidence - std), 3),
+                round(min(1.0, mean_confidence + std), 3),
+            ],
+        }
+
+    def stats(self, actor: str | None = None) -> dict[str, Any]:
+        """Aggregate shape of the record — the at-a-glance view.
+
+        Reuses the same scoped scan as `cvi`, so the numbers here can't disagree
+        with the trust index. Reports totals, the confidence range and a quartile
+        histogram, and a per-actor breakdown. An empty record returns a
+        well-formed zeroed report, mirroring `cvi`'s empty-case contract.
+        """
+        scope = self.list(actor)
+        total = len(scope)
+        buckets = {"0.00-0.25": 0, "0.25-0.50": 0, "0.50-0.75": 0, "0.75-1.00": 0}
+        if total == 0:
+            return {
+                "total": 0,
+                "attested": 0,
+                "held": 0,
+                "held_ratio": 0.0,
+                "mean_confidence": 0.0,
+                "min_confidence": 0.0,
+                "max_confidence": 0.0,
+                "by_actor": {},
+                "confidence_buckets": buckets,
+            }
+        confidences = [a["confidence"] for a in scope]
+        held = [a for a in scope if a["status"] == "held"]
+        by_actor: dict[str, int] = {}
+        for entry in scope:
+            by_actor[entry["actor"]] = by_actor.get(entry["actor"], 0) + 1
+        for confidence in confidences:
+            if confidence < 0.25:
+                buckets["0.00-0.25"] += 1
+            elif confidence < 0.50:
+                buckets["0.25-0.50"] += 1
+            elif confidence < 0.75:
+                buckets["0.50-0.75"] += 1
+            else:
+                buckets["0.75-1.00"] += 1
+        return {
+            "total": total,
+            "attested": total - len(held),
+            "held": len(held),
+            "held_ratio": round(len(held) / total, 3),
+            "mean_confidence": round(sum(confidences) / total, 3),
+            "min_confidence": min(confidences),
+            "max_confidence": max(confidences),
+            "by_actor": by_actor,
+            "confidence_buckets": buckets,
         }

@@ -1,9 +1,12 @@
 import io
+import json
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 
 import oceanic_os
-from attestation import CONFIDENCE_THRESHOLD
+from attestation import CONFIDENCE_THRESHOLD, AttestationEngine
 
 
 class BootTests(unittest.TestCase):
@@ -61,6 +64,67 @@ class BootTests(unittest.TestCase):
         self.assertEqual(code, 0)
         report = json.loads(buffer.getvalue())
         self.assertEqual(report["status"], "continues")
+
+
+class SubcommandTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.workspace = tempfile.mkdtemp(prefix="oceanicos-cli-")
+        self._prev_db = os.environ.get("OCEANICOS_DB")
+        self._prev_ws = os.environ.get("OCEANICOS_WORKSPACE")
+        os.environ["OCEANICOS_DB"] = self.db_path
+        os.environ["OCEANICOS_WORKSPACE"] = self.workspace
+
+    def tearDown(self):
+        for key, prev in (("OCEANICOS_DB", self._prev_db), ("OCEANICOS_WORKSPACE", self._prev_ws)):
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def _run(self, argv):
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = oceanic_os.main(argv)
+        return code, buffer.getvalue()
+
+    def test_verify_on_intact_ledger_exits_zero(self):
+        AttestationEngine(self.db_path).attest("a", "c", [], 0.9)
+        code, out = self._run(["verify"])
+        self.assertEqual(code, 0)
+        self.assertIn("INTACT", out)
+
+    def test_verify_json_mode(self):
+        code, out = self._run(["verify", "--json"])
+        self.assertEqual(code, 0)
+        self.assertIn("intact", json.loads(out))
+
+    def test_stats_prints_totals(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "1", [], 0.9)
+        engine.attest("b", "2", [], 0.5)
+        code, out = self._run(["stats"])
+        self.assertEqual(code, 0)
+        self.assertIn("attestations: 2", out)
+
+    def test_ready_probes_dependencies(self):
+        code, out = self._run(["ready"])
+        self.assertEqual(code, 0)
+        self.assertIn("ready: True", out)
+
+    def test_unknown_command_returns_two(self):
+        code, out = self._run(["nonsense"])
+        self.assertEqual(code, 2)
+        self.assertIn("unknown command", out)
+
+    def test_leading_flag_still_boots(self):
+        code, out = self._run(["--json"])  # no subcommand -> boot
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["status"], "continues")
 
 
 if __name__ == "__main__":

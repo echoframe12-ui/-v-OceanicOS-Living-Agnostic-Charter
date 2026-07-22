@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -23,10 +24,15 @@ from typing import Any
 import anchor
 import identity
 import models
+import readiness
 from attestation import CONFIDENCE_THRESHOLD, AttestationEngine
 from models import ModelAdapter, ModelRouter
 
 DEFAULT_MANIFEST = "boot/init.v1"
+
+
+def _db_path() -> str:
+    return os.getenv("OCEANICOS_DB", "oceanicos.db")
 
 
 def _manifest(path: str) -> dict[str, Any]:
@@ -128,8 +134,8 @@ def _render(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="oceanic-os", description=__doc__)
+def _cmd_boot(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="oceanic-os boot", description=__doc__)
     parser.add_argument("--boot", default=DEFAULT_MANIFEST, help="manifest path")
     parser.add_argument(
         "--state", choices=["stateless", "stateful"], default="stateless"
@@ -139,10 +145,74 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--json", action="store_true", help="emit the raw boot report")
     args = parser.parse_args(argv)
-
     report = boot(args.boot, stateless=(args.state == "stateless"))
     print(json.dumps(report, indent=2) if args.json else _render(report))
     return 0  # exit 0 — the system continues, always
+
+
+def _emit(report: dict[str, Any], as_json: bool, render) -> None:
+    print(json.dumps(report, indent=2) if as_json else render(report))
+
+
+def _cmd_verify(argv: list[str]) -> int:
+    """Verify the configured ledger offline — exit non-zero if the chain is broken."""
+    parser = argparse.ArgumentParser(prog="oceanic-os verify")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    report = AttestationEngine(_db_path()).verify()
+    _emit(
+        report,
+        args.json,
+        lambda r: f"chain: {'INTACT' if r['intact'] else 'BROKEN @ ' + str(r.get('broken_at'))}"
+        f" · length {r['length']}"
+        f" · {'trustworthy' if r.get('trustworthy') else ('checkpointed' if r.get('checkpointed') else 'unsealed')}",
+    )
+    return 0 if report["intact"] else 1
+
+
+def _cmd_stats(argv: list[str]) -> int:
+    """Print the ledger's aggregate statistics."""
+    parser = argparse.ArgumentParser(prog="oceanic-os stats")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    report = AttestationEngine(_db_path()).stats()
+    _emit(
+        report,
+        args.json,
+        lambda r: f"attestations: {r['total']} ({r['attested']} attested, {r['held']} held,"
+        f" ratio {r['held_ratio']}) · mean conf {r['mean_confidence']}",
+    )
+    return 0
+
+
+def _cmd_ready(argv: list[str]) -> int:
+    """Probe the operational dependencies — exit non-zero if not ready."""
+    parser = argparse.ArgumentParser(prog="oceanic-os ready")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    report = readiness.probe(_db_path(), os.getenv("OCEANICOS_WORKSPACE", "workspace"))
+    _emit(report, args.json, lambda r: f"ready: {r['ready']} · checks {r['checks']}")
+    return 0 if report["ready"] else 1
+
+
+_COMMANDS = {"boot": _cmd_boot, "verify": _cmd_verify, "stats": _cmd_stats, "ready": _cmd_ready}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Dispatch to a subcommand; `boot` is the default (and back-compatible).
+
+    A leading flag (e.g. `--boot …`) or no argument runs `boot`, so the original
+    invocation still works; `verify`/`stats`/`ready` are the operator tools.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command = "boot"
+    if argv and not argv[0].startswith("-"):
+        command = argv.pop(0)
+    handler = _COMMANDS.get(command)
+    if handler is None:
+        print(f"unknown command '{command}'; choose from {sorted(_COMMANDS)}")
+        return 2
+    return handler(argv)
 
 
 if __name__ == "__main__":

@@ -210,6 +210,115 @@ class OceanicOSAppTests(unittest.TestCase):
         # the rules engine sits on the panel as the deterministic anchor
         self.assertIn("rules-engine", payload["adapters"])
 
+    def test_attestation_lookup_by_content_and_hash(self):
+        engine = app_module.attestation_engine
+        att = engine.attest("lookup-subj", "a very specific output", [], 0.9)
+
+        # by content: the server hashes it and finds the match
+        by_content = self.client.post(
+            "/attestations/lookup",
+            data=json.dumps({"content": "a very specific output"}),
+            content_type="application/json",
+        ).get_json()
+        self.assertTrue(by_content["found"])
+        self.assertEqual(by_content["sha256"], att["sha256"])
+        self.assertIn(att["id"], [m["id"] for m in by_content["matches"]])
+
+        # by sha256 directly
+        by_hash = self.client.post(
+            "/attestations/lookup",
+            data=json.dumps({"sha256": att["sha256"]}),
+            content_type="application/json",
+        ).get_json()
+        self.assertTrue(by_hash["found"])
+
+        # unknown content -> found false
+        miss = self.client.post(
+            "/attestations/lookup",
+            data=json.dumps({"content": "never attested"}),
+            content_type="application/json",
+        ).get_json()
+        self.assertFalse(miss["found"])
+        self.assertEqual(miss["matches"], [])
+
+        # missing body -> 400
+        self.assertEqual(
+            self.client.post(
+                "/attestations/lookup", data=json.dumps({}),
+                content_type="application/json",
+            ).status_code,
+            400,
+        )
+
+    def test_attestation_batch_lookup(self):
+        engine = app_module.attestation_engine
+        engine.attest("batch-1", "output one", [], 0.9)
+        engine.attest("batch-2", "output two", [], 0.9)
+
+        resp = self.client.post(
+            "/attestations/lookup/batch",
+            data=json.dumps({"contents": ["output one", "never attested", "output two"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["count"], 3)
+        self.assertTrue(body["results"][0]["found"])   # order preserved
+        self.assertFalse(body["results"][1]["found"])
+        self.assertTrue(body["results"][2]["found"])
+
+        # by sha256s too
+        sha = body["results"][0]["sha256"]
+        by_hash = self.client.post(
+            "/attestations/lookup/batch",
+            data=json.dumps({"sha256s": [sha]}),
+            content_type="application/json",
+        ).get_json()
+        self.assertTrue(by_hash["results"][0]["found"])
+
+        # over the cap -> 400
+        self.assertEqual(
+            self.client.post(
+                "/attestations/lookup/batch",
+                data=json.dumps({"contents": ["x"] * 101}),
+                content_type="application/json",
+            ).status_code,
+            400,
+        )
+        # neither list -> 400
+        self.assertEqual(
+            self.client.post(
+                "/attestations/lookup/batch", data=json.dumps({}),
+                content_type="application/json",
+            ).status_code,
+            400,
+        )
+
+    def test_attestation_receipt_endpoint(self):
+        engine = app_module.attestation_engine
+        att = engine.attest("receipt-subject", "content", ["plan"], 0.9)
+        resp = self.client.get(f"/attestations/{att['id']}/receipt")
+        self.assertEqual(resp.status_code, 200)
+        receipt = resp.get_json()
+        self.assertEqual(receipt["attestation"]["sha256"], att["sha256"])
+        self.assertIn("chain_position", receipt)
+        self.assertIn("sealed", receipt)
+        self.assertTrue(receipt["chain_intact"])
+        # missing id -> 404
+        self.assertEqual(self.client.get("/attestations/999999/receipt").status_code, 404)
+
+    def test_attestations_stats_endpoint(self):
+        engine = app_module.attestation_engine
+        engine.attest("stats-a", "1", [], 0.95, actor="stats-user")
+        engine.attest("stats-b", "2", [], 0.5, actor="stats-user")  # held
+        stats = self.client.get("/attestations/stats?actor=stats-user").get_json()
+        self.assertEqual(stats["total"], 2)
+        self.assertEqual(stats["held"], 1)
+        self.assertEqual(stats["by_actor"], {"stats-user": 2})
+        self.assertIn("confidence_buckets", stats)
+        # global stats include this actor's records
+        self.assertGreaterEqual(self.client.get("/attestations/stats").get_json()["total"], 2)
+
     def test_attestations_filtering(self):
         engine = app_module.attestation_engine
         engine.attest("filter-attested", "x", [], 0.9, actor="filter-user")
@@ -231,6 +340,111 @@ class OceanicOSAppTests(unittest.TestCase):
             self.client.get("/attestations?min_confidence=high").status_code, 400
         )
 
+    def test_config_warnings_flag_risky_setups(self):
+        # no signing key, auto off, no admins, auth off -> the risky combination
+        cfg = {
+            "signing_enabled": False,
+            "checkpoint": {"auto": False},
+            "admins": 0,
+            "require_auth": False,
+            "held_sla_seconds": 86400,
+        }
+        warnings = app_module._config_warnings(cfg)
+        messages = " ".join(w["message"] for w in warnings)
+        self.assertIn("tamper-evident but not", messages)  # no signing key
+        self.assertIn("held attestations cannot be reviewed", messages)  # no admins
+        self.assertTrue(any(w["level"] == "warn" for w in warnings))
+
+        # signing on but auto off -> the manual-seal warning
+        cfg2 = {
+            "signing_enabled": True,
+            "checkpoint": {"auto": False},
+            "admins": 1,
+            "require_auth": True,
+            "held_sla_seconds": 60,
+        }
+        self.assertTrue(
+            any("auto-checkpointing off" in w["message"] for w in app_module._config_warnings(cfg2))
+        )
+
+        # a healthy config -> no warn-level findings
+        cfg3 = {
+            "signing_enabled": True,
+            "checkpoint": {"auto": True},
+            "admins": 2,
+            "require_auth": True,
+            "held_sla_seconds": 60,
+        }
+        self.assertFalse(any(w["level"] == "warn" for w in app_module._config_warnings(cfg3)))
+
+    def test_config_is_admin_gated_and_never_leaks_the_signing_key(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("config-steward")
+        original_key = engine._signing_key
+        engine._signing_key = "super-secret-signing-key"
+        try:
+            admin = self.client.post(
+                "/auth/register", data=json.dumps({"username": "config-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register", data=json.dumps({"username": "config-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            # stewardship-gated
+            self.assertEqual(
+                self.client.get("/config", headers={"Authorization": f"Bearer {member}"}).status_code,
+                403,
+            )
+
+            resp = self.client.get("/config", headers={"Authorization": f"Bearer {admin}"})
+            self.assertEqual(resp.status_code, 200)
+            cfg = resp.get_json()
+            # reports the effective config
+            self.assertIn("require_auth", cfg)
+            self.assertIn("window_seconds", cfg["quota"])
+            self.assertIn("held_sla_seconds", cfg)
+            self.assertIn("checkpoint", cfg)
+            self.assertTrue(cfg["signing_enabled"])  # a key is set
+            self.assertTrue(cfg["model_adapters"])
+            self.assertIn("warnings", cfg)  # config warnings surfaced
+            # the crux: the secret itself is nowhere in the response
+            self.assertNotIn("super-secret-signing-key", json.dumps(cfg))
+        finally:
+            engine._signing_key = original_key
+            app_module.auth_registry.admin_users.discard("config-steward")
+
+    def test_every_response_carries_a_request_id(self):
+        resp = self.client.get("/health")
+        self.assertTrue(resp.headers.get("X-Request-ID"))
+
+    def test_request_id_is_propagated_from_the_caller(self):
+        resp = self.client.get("/health", headers={"X-Request-ID": "trace-xyz-1"})
+        self.assertEqual(resp.headers.get("X-Request-ID"), "trace-xyz-1")
+
+    def test_malicious_request_id_is_sanitized_not_reflected_raw(self):
+        # werkzeug rejects newlines at the header level (defense in depth); the
+        # sanitizer strips the characters that do get through (spaces, pipes, …)
+        resp = self.client.get("/health", headers={"X-Request-ID": "a b|c<script>"})
+        rid = resp.headers.get("X-Request-ID")
+        self.assertNotIn(" ", rid)
+        self.assertNotIn("<", rid)
+        self.assertEqual(rid, "abcscript")
+
+    def test_adr_endpoints_serve_the_decision_records(self):
+        index = self.client.get("/adr")
+        self.assertEqual(index.status_code, 200)
+        records = index.get_json()
+        self.assertGreaterEqual(len(records), 30)
+        self.assertTrue(records[0]["title"])
+
+        one = self.client.get("/adr/1")
+        self.assertEqual(one.status_code, 200)
+        self.assertIn("content", one.get_json())
+
+        self.assertEqual(self.client.get("/adr/9999").status_code, 404)
+
     def test_readyz_reports_ready(self):
         resp = self.client.get("/readyz")
         self.assertEqual(resp.status_code, 200)
@@ -247,6 +461,25 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(spec["openapi"], "3.0.3")
         self.assertIn("/metrics", spec["paths"])
         self.assertIn("/openapi.json", spec["paths"])  # it documents itself too
+
+    def test_me_cvi_history_tracks_the_actor(self):
+        token = self.client.post(
+            "/auth/register", data=json.dumps({"username": "trend-user"}),
+            content_type="application/json",
+        ).get_json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+        self.client.post(
+            "/builder/run", data=json.dumps({"task": "my build", "context": "c"}),
+            content_type="application/json", headers=auth,
+        )
+        series = self.client.get("/me/cvi/history", headers=auth).get_json()
+        self.assertTrue(series)
+        # the latest personal point matches /me/cvi
+        mine = self.client.get("/me/cvi", headers=auth).get_json()["cvi"]
+        self.assertEqual(series[-1]["cvi"], mine)
+        self.assertEqual(series[-1]["actor"], "trend-user")
+        # validation
+        self.assertEqual(self.client.get("/me/cvi/history?limit=x", headers=auth).status_code, 400)
 
     def test_cvi_history_records_on_build_and_matches_cvi(self):
         before = len(self.client.get("/cvi/history").get_json())
@@ -424,6 +657,78 @@ class OceanicOSAppTests(unittest.TestCase):
         finally:
             app_module.auth_registry.admin_users.discard("conflict-steward")
 
+    def test_verify_bundle_endpoint_checks_a_supplied_bundle(self):
+        engine = app_module.attestation_engine
+        engine.attest("vb-a", "one", [], 0.9)
+        engine.attest("vb-b", "two", [], 0.9)
+        bundle = engine.export()
+
+        # a good bundle verifies intact
+        good = self.client.post(
+            "/attestations/verify-bundle",
+            data=json.dumps(bundle),
+            content_type="application/json",
+        )
+        self.assertEqual(good.status_code, 200)
+        self.assertTrue(good.get_json()["intact"])
+
+        # a tampered bundle is caught, with the broken id
+        bundle["attestations"][0]["confidence"] = 0.1
+        bad = self.client.post(
+            "/attestations/verify-bundle",
+            data=json.dumps(bundle),
+            content_type="application/json",
+        ).get_json()
+        self.assertFalse(bad["intact"])
+        self.assertEqual(bad["broken_at"], 1)
+
+        # a malformed body is rejected
+        self.assertEqual(
+            self.client.post(
+                "/attestations/verify-bundle",
+                data=json.dumps({"not": "a bundle"}),
+                content_type="application/json",
+            ).status_code,
+            400,
+        )
+
+    def test_drift_audit_records_and_lists(self):
+        app_module.auth_registry.admin_users.add("drift-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register", data=json.dumps({"username": "drift-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register", data=json.dumps({"username": "drift-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            # admin-gated
+            self.assertEqual(
+                self.client.post("/attestations/audit", headers={"Authorization": f"Bearer {member}"}).status_code,
+                403,
+            )
+
+            before = len(self.client.get("/attestations/audits").get_json())
+            audit = self.client.post(
+                "/attestations/audit", headers={"Authorization": f"Bearer {admin}"}
+            )
+            self.assertEqual(audit.status_code, 200)
+            entry = audit.get_json()
+            self.assertTrue(entry["intact"])
+            self.assertIn("checked_at", entry)
+
+            after = self.client.get("/attestations/audits").get_json()
+            self.assertEqual(len(after), before + 1)
+            self.assertEqual(after[0]["id"], entry["id"])  # newest first
+        finally:
+            app_module.auth_registry.admin_users.discard("drift-steward")
+
+    def test_metrics_carries_last_audit_intact(self):
+        body = self.client.get("/metrics").get_data(as_text=True)
+        self.assertIn("oceanicos_last_audit_intact", body)
+
     def test_attestations_verify_endpoint_reports_an_intact_chain(self):
         verify = self.client.get("/attestations/verify")
         self.assertEqual(verify.status_code, 200)
@@ -523,7 +828,14 @@ class OceanicOSAppTests(unittest.TestCase):
     def test_vaas_endpoints(self):
         cvi = self.client.get("/cvi")
         self.assertEqual(cvi.status_code, 200)
-        self.assertIn("cvi", cvi.get_json())
+        payload = cvi.get_json()
+        self.assertIn("cvi", payload)
+        # the trust index carries its own spread as an interval
+        interval = payload["confidence_interval"]
+        self.assertEqual(len(interval), 2)
+        self.assertGreaterEqual(interval[0], 0.0)
+        self.assertLessEqual(interval[1], 1.0)
+        self.assertLessEqual(interval[0], interval[1])
 
         pricing = self.client.get("/pricing")
         self.assertEqual(pricing.status_code, 200)

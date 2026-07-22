@@ -2,13 +2,18 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, render_template, request
 
+import requestlog
+
+import adr
 import anchor
 import identity
 import metrics
@@ -16,6 +21,8 @@ import openapi
 import readiness
 from agent import AgentLoop
 from cvi_history import CviHistory
+from drift_audit import DriftAuditLog
+from verify_ledger import verify_bundle
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
 from auth import ANONYMOUS, AuthRegistry
@@ -38,6 +45,46 @@ from universal_builder import UniversalBuilder
 from workflows import WorkflowEngine
 
 app = Flask(__name__)
+
+access_logger = logging.getLogger("oceanicos.access")
+if not access_logger.handlers:
+    # Emit one JSON object per line to stderr; the message is already serialized,
+    # so the formatter passes it through untouched. propagate=False keeps it out
+    # of the root logger (no duplicate lines).
+    _access_handler = logging.StreamHandler()
+    _access_handler.setFormatter(logging.Formatter("%(message)s"))
+    access_logger.addHandler(_access_handler)
+    access_logger.setLevel(logging.INFO)
+    access_logger.propagate = False
+
+
+@app.before_request
+def _assign_request_id():
+    g.request_id = requestlog.clean_request_id(request.headers.get("X-Request-ID"))
+    g.start_time = time.perf_counter()
+
+
+@app.after_request
+def _log_access(response):
+    start = getattr(g, "start_time", None)
+    latency_ms = round((time.perf_counter() - start) * 1000, 2) if start else 0.0
+    request_id = getattr(g, "request_id", "")
+    response.headers["X-Request-ID"] = request_id
+    access_logger.info(
+        json.dumps(
+            requestlog.access_record(
+                request_id,
+                request.method,
+                request.path,
+                response.status_code,
+                getattr(g, "actor", None),
+                latency_ms,
+            )
+        )
+    )
+    return response
+
+
 service = OceanicOSService()
 workflow_engine = WorkflowEngine()
 planner = Planner()
@@ -85,14 +132,24 @@ auth_registry = AuthRegistry()
 usage_log = UsageLog(str(service.db_path))
 held_review_log = HeldReviewLog(str(service.db_path))
 cvi_history = CviHistory(str(service.db_path))
+drift_audit_log = DriftAuditLog(str(service.db_path))
 # Time-to-decision SLA for held attestations (seconds). 0 disables breach flags.
 HELD_SLA_SECONDS = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
 
 
-def _snapshot_cvi() -> None:
-    """Record the current platform CVI when it has moved (round 29)."""
-    snapshot = attestation_engine.cvi(released_ids=held_review_log.released_ids())
-    cvi_history.record_if_changed(snapshot)
+def _snapshot_cvi(actor: str | None = None) -> None:
+    """Record the platform CVI when it moves, and the actor's own when given.
+
+    The platform series is always updated; when a named actor drove the change
+    (a build), their personal CVI trend is recorded too, so `/me/cvi/history`
+    reflects that actor's verification quality over time (round 36).
+    """
+    released = held_review_log.released_ids()
+    cvi_history.record_if_changed(attestation_engine.cvi(released_ids=released))
+    if actor and actor != ANONYMOUS:
+        cvi_history.record_if_changed(
+            attestation_engine.cvi(actor=actor, released_ids=released), actor=actor
+        )
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
@@ -450,6 +507,98 @@ def list_held_reviews(att_id: int):
     return jsonify(held_review_log.list(att_id))
 
 
+@app.route("/attestations/<int:att_id>/receipt", methods=["GET"])
+def attestation_receipt(att_id: int):
+    """A verification receipt for one attestation — hash, chain position, seal.
+
+    The per-item proof: the attestation's content hash, its height in the chain,
+    whether the chain is intact, and whether a signed checkpoint seals its
+    position. 404 for a missing id.
+    """
+    receipt = attestation_engine.receipt(att_id)
+    if receipt is None:
+        return jsonify({"error": f"no attestation #{att_id}"}), 404
+    return jsonify(receipt)
+
+
+@app.route("/attestations/audit", methods=["POST"])
+@require_admin
+def run_drift_audit():
+    """Run a drift audit — verify the ledger and record the result on the trail.
+
+    Verifiable is not verified: this looks, and remembers having looked. A
+    stewardship action; the recorded entry proves the check happened and when.
+    """
+    return jsonify(drift_audit_log.record(attestation_engine.verify()))
+
+
+@app.route("/attestations/audits", methods=["GET"])
+def list_drift_audits():
+    """The drift-audit trail — proof the ledger has been verified over time."""
+    limit = request.args.get("limit", type=int) if "limit" in request.args else None
+    if "limit" in request.args and limit is None:
+        return jsonify({"error": "limit must be an integer"}), 400
+    return jsonify(drift_audit_log.list(limit=limit))
+
+
+@app.route("/attestations/lookup", methods=["POST"])
+def lookup_attestation():
+    """Content-addressable lookup — was this exact output attested?
+
+    Give `content` (hashed server-side) or a `sha256` directly; returns every
+    attestation of that hash with its confidence and status. The way back in
+    from an artifact to its attestation.
+    """
+    payload = request.get_json(silent=True) or {}
+    if "content" in payload:
+        digest = hashlib.sha256(str(payload["content"]).encode()).hexdigest()
+    elif "sha256" in payload:
+        digest = str(payload["sha256"])
+    else:
+        return jsonify({"error": "provide 'content' or 'sha256'"}), 400
+    matches = attestation_engine.by_content_hash(digest)
+    return jsonify({"sha256": digest, "found": bool(matches), "matches": matches})
+
+
+_MAX_BATCH = 100
+
+
+@app.route("/attestations/lookup/batch", methods=["POST"])
+def lookup_attestations_batch():
+    """Content-addressable lookup for many outputs at once.
+
+    `contents` (each hashed server-side) and/or `sha256s` (used directly) as
+    lists; returns one result per item in order. Capped at 100 items per call.
+    """
+    payload = request.get_json(silent=True) or {}
+    contents = payload.get("contents")
+    hashes = payload.get("sha256s")
+    if not isinstance(contents, list) and not isinstance(hashes, list):
+        return jsonify({"error": "provide 'contents' or 'sha256s' as a list"}), 400
+    digests: list[str] = []
+    if isinstance(contents, list):
+        digests += [hashlib.sha256(str(c).encode()).hexdigest() for c in contents]
+    if isinstance(hashes, list):
+        digests += [str(h) for h in hashes]
+    if len(digests) > _MAX_BATCH:
+        return jsonify({"error": f"at most {_MAX_BATCH} items per batch"}), 400
+    results = []
+    for digest in digests:
+        matches = attestation_engine.by_content_hash(digest)
+        results.append({"sha256": digest, "found": bool(matches), "matches": matches})
+    return jsonify({"count": len(results), "results": results})
+
+
+@app.route("/attestations/stats", methods=["GET"])
+def attestation_stats():
+    """Aggregate shape of the record — totals, confidence histogram, by-actor.
+
+    Reuses the engine's scan, so the held ratio here matches `/cvi`'s. `?actor=`
+    scopes it. Public and aggregate, like `/cvi`.
+    """
+    return jsonify(attestation_engine.stats(actor=request.args.get("actor")))
+
+
 @app.route("/attestations/verify", methods=["GET"])
 def verify_attestations():
     """Confirm the ledger has not been tampered with.
@@ -460,6 +609,23 @@ def verify_attestations():
     validates under the current key.
     """
     return jsonify(attestation_engine.verify())
+
+
+@app.route("/attestations/verify-bundle", methods=["POST"])
+def verify_supplied_bundle():
+    """Verify an exported bundle a caller holds — the online twin of verify_ledger.py.
+
+    Runs the same pure `verify_bundle` the offline verifier uses, so a client can
+    check a bundle against a trusted verifier without local tooling. Chain
+    integrity is always checked; the signed checkpoint validates only if this
+    server holds the key the bundle was sealed with (no secret is accepted over
+    the wire).
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("attestations"), list):
+        return jsonify({"error": "body must be an exported ledger bundle"}), 400
+    key = os.getenv("OCEANICOS_SIGNING_KEY") or None
+    return jsonify(verify_bundle(payload, key=key))
 
 
 @app.route("/attestations/checkpoint", methods=["POST"])
@@ -475,9 +641,12 @@ def checkpoint_attestations():
             503,
         )
     try:
-        return jsonify(attestation_engine.checkpoint())
+        sealed = attestation_engine.checkpoint()
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 409
+    # sealing the head is a natural audit point — record one (continuous validation)
+    drift_audit_log.record(attestation_engine.verify())
+    return jsonify(sealed)
 
 
 @app.route("/attestations/export", methods=["GET"])
@@ -587,6 +756,7 @@ def prometheus_metrics():
         {"name": "oceanicos_chain_trustworthy", "help": "Chain intact and signed head verified (1 yes, 0 no)", "value": bool(verify.get("trustworthy"))},
         {"name": "oceanicos_checkpoint_auto", "help": "Automatic checkpoint sealing enabled (1 yes, 0 no)", "value": policy["auto"]},
         {"name": "oceanicos_model_adapters", "help": "Registered dissent-panel adapters", "value": len(model_router.list_adapters())},
+        {"name": "oceanicos_last_audit_intact", "help": "Latest drift audit found the chain intact (1 yes/none, 0 broken)", "value": (drift_audit_log.latest() or {}).get("intact", True)},
     ]
     return Response(metrics.render(snapshot), mimetype=metrics.CONTENT_TYPE)
 
@@ -744,6 +914,21 @@ def list_decisions():
     return jsonify(decision_registry.list())
 
 
+@app.route("/adr", methods=["GET"])
+def list_architecture_decisions():
+    """The Architecture Decision Records — why the platform is the way it is."""
+    return jsonify(adr.list_adr())
+
+
+@app.route("/adr/<int:number>", methods=["GET"])
+def get_architecture_decision(number: int):
+    """One ADR with its full text; 404 if there is no such record."""
+    record = adr.get_adr(number)
+    if record is None:
+        return jsonify({"error": f"no ADR #{number}"}), 404
+    return jsonify(record)
+
+
 @app.route("/artifacts", methods=["POST"])
 def create_artifact():
     payload = request.get_json(silent=True) or {}
@@ -800,7 +985,7 @@ def run_builder():
 
     result = builder.run(task, context, actor=g.actor)
     usage_log.record(g.actor, "build", g.tier, task)
-    _snapshot_cvi()
+    _snapshot_cvi(g.actor)  # platform + this actor's trend
     result["dashboard"] = dashboard.summary()
     resp = jsonify(result)
     if g.actor != ANONYMOUS:
@@ -903,6 +1088,82 @@ def admin_overview():
     )
 
 
+def _effective_config() -> dict:
+    """The configuration this process is actually running — from live objects.
+
+    Read from the live components, not raw env, so it reports the truth the
+    process is running, not the intent someone set. Contains no secret value:
+    signing is reported as the boolean `signing_enabled` (the key never leaves
+    the engine), and no token is ever assembled here.
+    """
+    return {
+        "require_auth": bool(app.config.get("REQUIRE_AUTH")),
+        "signing_enabled": attestation_engine.can_sign,
+        "checkpoint": attestation_engine.checkpoint_policy,
+        "quota": {
+            "window_seconds": quotas.WINDOW_SECONDS,
+            "tier_limits": dict(quotas.TIER_LIMITS),
+        },
+        "held_sla_seconds": HELD_SLA_SECONDS,
+        "admins": len(auth_registry.admin_users),
+        "model_adapters": [a["name"] for a in model_router.list_adapters()],
+        "db_path": str(service.db_path),
+        "workspace": os.getenv("OCEANICOS_WORKSPACE", "workspace"),
+        "version": "1.0",
+    }
+
+
+def _config_warnings(cfg: dict) -> list[dict]:
+    """Flag risky or degraded configurations so misconfig doesn't fail silently.
+
+    Pure function over the effective config: each finding is a `{level, message}`
+    (`warn` for a gap that undermines a feature the operator seems to want,
+    `info` for a deliberate-but-notable posture). It reports the shape of the
+    running config, not the secrets in it.
+    """
+    findings: list[dict] = []
+    if cfg["signing_enabled"] and not cfg["checkpoint"]["auto"]:
+        findings.append({
+            "level": "warn",
+            "message": "signing key set but auto-checkpointing off — the head is "
+            "sealed only on a manual POST; set OCEANICOS_CHECKPOINT_EVERY",
+        })
+    if not cfg["signing_enabled"]:
+        findings.append({
+            "level": "info",
+            "message": "no signing key — the ledger is tamper-evident but not "
+            "tamper-resistant (checkpoints unavailable)",
+        })
+    if cfg["admins"] == 0:
+        findings.append({
+            "level": "warn",
+            "message": "no admin users — held attestations cannot be reviewed; "
+            "set OCEANICOS_ADMIN_USERS",
+        })
+    if not cfg["require_auth"]:
+        findings.append({
+            "level": "info",
+            "message": "auth enforcement off — the open path is unmetered",
+        })
+    if cfg["held_sla_seconds"] == 0:
+        findings.append({"level": "info", "message": "held-review SLA disabled"})
+    return findings
+
+
+@app.route("/config", methods=["GET"])
+@require_admin
+def effective_config():
+    """The effective runtime configuration — what this instance is actually running.
+
+    Stewardship introspection: reports the operational config from the live
+    objects (auth mode, quota window and tiers, held SLA, checkpoint policy,
+    whether signing is enabled) plus warnings for risky setups — never a secret.
+    """
+    cfg = _effective_config()
+    cfg["warnings"] = _config_warnings(cfg)
+    return jsonify(cfg)
+
+
 @app.route("/me/builds", methods=["GET"])
 @require_auth
 def my_builds():
@@ -930,6 +1191,16 @@ def my_cvi():
             actor=g.actor, released_ids=held_review_log.released_ids()
         )
     )
+
+
+@app.route("/me/cvi/history", methods=["GET"])
+@require_auth
+def my_cvi_history():
+    """The authenticated actor's own CVI trend over time."""
+    limit = request.args.get("limit", type=int) if "limit" in request.args else None
+    if "limit" in request.args and limit is None:
+        return jsonify({"error": "limit must be an integer"}), 400
+    return jsonify(cvi_history.list(actor=g.actor, limit=limit))
 
 
 @app.route("/me/quota", methods=["GET"])

@@ -120,6 +120,31 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(report["held_ratio"], 0.5)
         self.assertEqual(report["cvi"], 0.4)
 
+    def test_cvi_reports_a_confidence_interval(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.5)  # spread: mean 0.7, std 0.2
+        report = engine.cvi()
+        self.assertEqual(report["mean_confidence"], 0.7)
+        self.assertEqual(report["confidence_interval"], [0.5, 0.9])
+
+    def test_single_attestation_interval_is_a_point(self):
+        engine = AttestationEngine(self.db_path)
+        c = engine.attest("a", "one", [], 0.83)["confidence"]
+        self.assertEqual(engine.cvi()["confidence_interval"], [c, c])  # std 0
+
+    def test_interval_clamps_within_unit_range(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.99)
+        engine.attest("b", "two", [], 0.99)
+        low, high = engine.cvi()["confidence_interval"]
+        self.assertGreaterEqual(low, 0.0)
+        self.assertLessEqual(high, 1.0)
+
+    def test_empty_record_interval_is_zeroed(self):
+        engine = AttestationEngine(self.db_path)
+        self.assertEqual(engine.cvi()["confidence_interval"], [0.0, 0.0])
+
     def test_cvi_credits_reviewed_released_items(self):
         engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9)
@@ -291,6 +316,124 @@ class SignedCheckpointTests(unittest.TestCase):
         checkpoints = engine.list_checkpoints()
         self.assertEqual([cp["id"] for cp in checkpoints], [first["id"], second["id"]])
         self.assertEqual(checkpoints[-1]["length"], 2)
+
+
+class ByContentHashTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.engine = AttestationEngine(self.db_path)
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_finds_attestations_of_a_content_hash(self):
+        entry = self.engine.attest("subj", "the exact output", [], 0.9)
+        matches = self.engine.by_content_hash(entry["sha256"])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["id"], entry["id"])
+
+    def test_returns_all_matches_for_repeated_content(self):
+        self.engine.attest("a", "same content", [], 0.9)
+        self.engine.attest("b", "same content", [], 0.6)
+        digest = self.engine.attest("c", "same content", [], 0.8)["sha256"]
+        self.assertEqual(len(self.engine.by_content_hash(digest)), 3)
+
+    def test_unknown_hash_returns_empty(self):
+        self.assertEqual(self.engine.by_content_hash("0" * 64), [])
+
+
+class ReceiptTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_receipt_reports_position_and_hash(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("first", "a", [], 0.9)
+        second = engine.attest("second", "b", [], 0.9)
+        receipt = engine.receipt(second["id"])
+        self.assertEqual(receipt["chain_position"], 2)
+        self.assertEqual(receipt["chain_length"], 2)
+        self.assertTrue(receipt["chain_intact"])
+        self.assertEqual(receipt["attestation"]["sha256"], second["sha256"])
+
+    def test_unsealed_until_checkpointed_then_sealed(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        a = engine.attest("x", "c", [], 0.9)
+        self.assertFalse(engine.receipt(a["id"])["sealed"])  # no checkpoint yet
+        engine.checkpoint()
+        sealed = engine.receipt(a["id"])
+        self.assertTrue(sealed["sealed"])
+        self.assertEqual(sealed["checkpoint"]["length"], 1)
+
+    def test_attestation_after_the_seal_is_not_sealed(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("sealed-one", "c", [], 0.9)
+        engine.checkpoint()  # seals length 1
+        later = engine.attest("after", "c", [], 0.9)  # position 2, beyond the seal
+        self.assertFalse(engine.receipt(later["id"])["sealed"])
+
+    def test_missing_id_returns_none(self):
+        self.assertIsNone(AttestationEngine(self.db_path).receipt(999))
+
+
+class StatsTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.engine = AttestationEngine(self.db_path)
+        self.engine.attest("a", "1", [], 0.9, actor="alice")   # attested, 0.75-1.00
+        self.engine.attest("b", "2", [], 0.6, actor="alice")   # held, 0.50-0.75
+        self.engine.attest("c", "3", [], 0.2, actor="bob")     # held, 0.00-0.25
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_empty_record_is_zeroed(self):
+        empty = AttestationEngine(self.db_path + ".empty")
+        try:
+            s = empty.stats()
+            self.assertEqual(s["total"], 0)
+            self.assertEqual(s["by_actor"], {})
+            self.assertEqual(sum(s["confidence_buckets"].values()), 0)
+        finally:
+            if os.path.exists(self.db_path + ".empty"):
+                os.remove(self.db_path + ".empty")
+
+    def test_totals_and_ratio_match_the_record(self):
+        s = self.engine.stats()
+        self.assertEqual(s["total"], 3)
+        self.assertEqual(s["attested"], 1)
+        self.assertEqual(s["held"], 2)
+        self.assertEqual(s["held_ratio"], round(2 / 3, 3))
+        # held ratio agrees with cvi's
+        self.assertEqual(s["held_ratio"], self.engine.cvi()["held_ratio"])
+
+    def test_confidence_range_and_histogram(self):
+        s = self.engine.stats()
+        self.assertEqual(s["min_confidence"], 0.2)
+        self.assertEqual(s["max_confidence"], 0.9)
+        self.assertEqual(s["confidence_buckets"]["0.75-1.00"], 1)
+        self.assertEqual(s["confidence_buckets"]["0.50-0.75"], 1)
+        self.assertEqual(s["confidence_buckets"]["0.00-0.25"], 1)
+
+    def test_by_actor_breakdown(self):
+        self.assertEqual(self.engine.stats()["by_actor"], {"alice": 2, "bob": 1})
+
+    def test_scoping_narrows_the_stats(self):
+        s = self.engine.stats(actor="alice")
+        self.assertEqual(s["total"], 2)
+        self.assertEqual(s["by_actor"], {"alice": 2})
 
 
 class SearchTests(unittest.TestCase):

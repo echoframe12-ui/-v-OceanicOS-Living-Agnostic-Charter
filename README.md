@@ -100,6 +100,7 @@ Use the endpoints:
 
 - GET /health
 - GET /readyz
+- GET /config
 - GET /openapi.json
 - POST /plans
 - POST /memory
@@ -119,10 +120,17 @@ Use the endpoints:
 - GET /builds/export
 - GET /builds/export.txt
 - GET /attestations
+- GET /attestations/stats
+- POST /attestations/lookup
+- POST /attestations/lookup/batch
 - GET /attestations/held
 - POST /attestations/<id>/review
 - GET /attestations/<id>/reviews
+- GET /attestations/<id>/receipt
 - GET /attestations/verify
+- POST /attestations/audit
+- GET /attestations/audits
+- POST /attestations/verify-bundle
 - POST /attestations/checkpoint
 - GET /attestations/export
 - GET /cvi
@@ -133,6 +141,8 @@ Use the endpoints:
 - GET /pricing
 - GET /observer
 - GET /anchor
+- GET /adr
+- GET /adr/<number>
 - POST /auth/register
 - GET /auth/whoami
 - GET /auth/users
@@ -140,6 +150,7 @@ Use the endpoints:
 - GET /me/attestations
 - GET /me/memory
 - GET /me/cvi
+- GET /me/cvi/history
 - GET /me/quota
 - GET /me/usage
 - GET /admin/overview
@@ -254,12 +265,13 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - `POST /models/consensus` runs every matching adapter in parallel and surfaces disagreement (`"dissent": true`) as the primary output.
 - The browser UI is a monochrome verification terminal with a deliberate 2.5-second render delay; it reports hashes, confidence, and source trails, never a single "final" answer.
 - `GET /builds/export` degrades the build ledger gracefully into a spreadsheet (CSV); `GET /builds/export.txt` degrades one step further, into plain text.
-- `GET /cvi` reports the Composite Verification Index — mean attestation confidence discounted by the held ratio; no evidence scores 0.0.
+- `GET /cvi` reports the Composite Verification Index — mean attestation confidence discounted by the held ratio; no evidence scores 0.0. It also carries a `confidence_interval` (`mean ± std` of the sample, clamped to `[0,1]`), so the trust index states its own spread — wide when the record disagrees, a point for a single sample (see [DECISIONS/0040](DECISIONS/0040-cvi-confidence-interval.md)).
 - `GET /cvi/history` returns the CVI as a time series — the trend behind the headline number, recorded change-only at the points it can move (a build, a held-review decision), scoped by `?actor=` and capped by `?limit=`. The console draws a sparkline from it (see [DECISIONS/0023](DECISIONS/0023-cvi-trend-history.md)).
 - `GET /metrics` exposes platform state (CVI, held queue, SLA breaches, chain integrity, builds, adapters) in the **Prometheus text exposition format** — scrapeable by any monitoring stack with no custom integration. Aggregate scalars only, public like `/cvi` (see [DECISIONS/0020](DECISIONS/0020-prometheus-metrics.md)).
 - `GET /attestations` filters the record server-side with fully parameterized query params — `status` (attested/held), `min_confidence`/`max_confidence`, `subject` (substring), `since` (ISO), `limit`, plus `actor`. No params returns the whole record. Every filter is a bound parameter, so a SQL payload is matched as a literal, never executed (see [DECISIONS/0021](DECISIONS/0021-attestation-search.md)).
 - `GET /attestations/verify` walks the attestation hash chain and reports whether the ledger is intact — the record attests to itself. Each attestation carries the previous entry's hash and its own, so any retroactive edit breaks the chain and the walk returns the id of the first broken link (see [DECISIONS/0011](DECISIONS/0011-tamper-evident-ledger.md)). It also validates the latest signed checkpoint: `trustworthy` is true only when the chain is intact, the sealed head is still reproduced, and its signature validates under the current key.
 - `POST /attestations/checkpoint` (admin) seals the current chain head with an HMAC signature keyed by `OCEANICOS_SIGNING_KEY` — a secret that never touches the database. This raises the bar from tamper-*evident* to tamper-*resistant*: an attacker who rewrites the ledger and recomputes the chain forward still can't forge a checkpoint matching their new head without the key, so `verify` reports `trustworthy: false` (see [DECISIONS/0012](DECISIONS/0012-signed-checkpoints.md)). Returns 503 if no key is configured, 409 if the chain is already broken. Set `OCEANICOS_CHECKPOINT_EVERY=N` to seal the head automatically every N attestations so the signed guarantee operates without a human in the loop (default 0 = manual-only; `/admin/overview` reports the active `checkpoint_policy`; see [DECISIONS/0014](DECISIONS/0014-automatic-checkpoint-cadence.md)).
+- `POST /attestations/verify-bundle` verifies a bundle the caller holds — the online twin of `verify_ledger.py`, running the same pure `verify_bundle` so the two can't diverge. Chain integrity always; the signature validates only for bundles this server sealed (no key is accepted over the wire). See [DECISIONS/0029](DECISIONS/0029-online-bundle-verification.md).
 - `GET /attestations/export` returns the whole sealed record — every attestation and checkpoint — as a self-contained JSON bundle. The standalone `verify_ledger.py` re-walks that bundle **offline**, with no service, database, or engine (`python verify_ledger.py --key <key> bundle.json`; exit 0 when intact and, with the key, trustworthy). Trust in the record becomes portable, not service-bound — the attestation ledger's answer to "the ground truth survives without the system" (see [DECISIONS/0013](DECISIONS/0013-portable-verifiable-export.md)).
 - `POST /models/consensus` convenes a 4-member dissent panel — three model heuristics plus a deterministic **rules engine** anchor ("3 competing LLMs + 1 rules engine"). `POST /rules/evaluate` returns the rules engine's verdict *with the named rules that fired and the reason each exists* — the one panel member that explains itself (see [DECISIONS/0017](DECISIONS/0017-rules-engine-panel-anchor.md)).
 - Held attestations get a stewardship resolution path (the Arbiter tier's held-review SLA, made real): `GET /attestations/held` (admin) lists them with a `pending`/`released`/`upheld` status; `POST /attestations/<id>/review` records a steward's `release` or `uphold` with a required reason; `GET /attestations/<id>/reviews` is the trail. Reviews are append-only records in their own table — the held attestation is never edited, so the chain stays intact — and a documented release lifts the item out of the CVI's held ratio (see [DECISIONS/0018](DECISIONS/0018-held-review-workflow.md)).
@@ -269,6 +281,7 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - The stack boots from a ratified, hash-attested manifest: `python oceanic_os.py --boot boot/init.v1 --state stateless --exit 0` (or `make boot`) instantiates the live components each manifest layer maps to and reports their real status — the threshold in force, the dissent panel's size, the checkpoint policy, the manifest hash, `anchor: present`. It always exits 0; the system continues.
 - The system states one name of itself, root to charter (`/` → Ω∞v Compiler → OceanicOS → Living Agnostic Charter). The boot banner and `/observer` both speak it from the single source in [`identity.py`](identity.py); see [TREE.md](TREE.md) and [DECISIONS/0016](DECISIONS/0016-canonical-identity.md).
 - The platform is offered commercially as Verification-as-a-Service — see [docs/VAAS.md](docs/VAAS.md) and `GET /pricing`.
+- Where OceanicOS sits in the AI-engineering landscape — the verification layer a self-evolving agent needs — is argued in [docs/POSITIONING.md](docs/POSITIONING.md).
 
 ## Identity and Multi-User Attribution
 
