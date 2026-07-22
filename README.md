@@ -135,6 +135,7 @@ Use the endpoints:
 - GET /attestations/export
 - GET /cvi
 - GET /cvi/history
+- GET /badge/cvi.svg
 - GET /metrics
 - POST /nodes
 - GET /nodes
@@ -267,6 +268,7 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - `GET /builds/export` degrades the build ledger gracefully into a spreadsheet (CSV); `GET /builds/export.txt` degrades one step further, into plain text.
 - `GET /cvi` reports the Composite Verification Index — mean attestation confidence discounted by the held ratio; no evidence scores 0.0. It also carries a `confidence_interval` (`mean ± std` of the sample, clamped to `[0,1]`), so the trust index states its own spread — wide when the record disagrees, a point for a single sample (see [DECISIONS/0040](DECISIONS/0040-cvi-confidence-interval.md)).
 - `GET /cvi/history` returns the CVI as a time series — the trend behind the headline number, recorded change-only at the points it can move (a build, a held-review decision), scoped by `?actor=` and capped by `?limit=`. The console draws a sparkline from it (see [DECISIONS/0023](DECISIONS/0023-cvi-trend-history.md)).
+- `GET /badge/cvi.svg` renders the live CVI as an embeddable SVG badge — grey `verification` label, coloured value: green at or above the `0.74` held/attested threshold, stepping down through yellow and orange to red below it, so a badge pinned to a README reads the same truth the terminal does. Self-contained (no shields.io, no fonts), public and aggregate like `/cvi`, `?label=` overrides the left cell, sent `no-cache` so an embed is never stale (see [DECISIONS/0042](DECISIONS/0042-cvi-trust-badge.md)).
 - `GET /metrics` exposes platform state (CVI, held queue, SLA breaches, chain integrity, builds, adapters) in the **Prometheus text exposition format** — scrapeable by any monitoring stack with no custom integration. Aggregate scalars only, public like `/cvi` (see [DECISIONS/0020](DECISIONS/0020-prometheus-metrics.md)).
 - `GET /attestations` filters the record server-side with fully parameterized query params — `status` (attested/held), `min_confidence`/`max_confidence`, `subject` (substring), `since` (ISO), `limit`, plus `actor`. No params returns the whole record. Every filter is a bound parameter, so a SQL payload is matched as a literal, never executed (see [DECISIONS/0021](DECISIONS/0021-attestation-search.md)).
 - `GET /attestations/verify` walks the attestation hash chain and reports whether the ledger is intact — the record attests to itself. Each attestation carries the previous entry's hash and its own, so any retroactive edit breaks the chain and the walk returns the id of the first broken link (see [DECISIONS/0011](DECISIONS/0011-tamper-evident-ledger.md)). It also validates the latest signed checkpoint: `trustworthy` is true only when the chain is intact, the sealed head is still reproduced, and its signature validates under the current key.

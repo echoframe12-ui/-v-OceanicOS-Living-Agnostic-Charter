@@ -15,6 +15,7 @@ import requestlog
 
 import adr
 import anchor
+import badge
 import identity
 import metrics
 import openapi
@@ -721,6 +722,24 @@ def cvi_trend():
     if "limit" in request.args and limit is None:
         return jsonify({"error": "limit must be an integer"}), 400
     return jsonify(cvi_history.list(actor=actor, limit=limit))
+
+
+@app.route("/badge/cvi.svg", methods=["GET"])
+def cvi_badge():
+    """The live CVI as an embeddable SVG badge — the trust index for a README.
+
+    Grey `verification` label, coloured value: green at or above the 0.74
+    threshold, stepping down to red below it, so a badge pinned to the repo
+    reads the same truth the terminal does. Public and aggregate like `/cvi`;
+    `?label=` overrides the left cell. Sent no-cache so an embed shows the
+    current index, not a stale one.
+    """
+    value = attestation_engine.cvi(released_ids=held_review_log.released_ids())["cvi"]
+    label = request.args.get("label", "verification")
+    svg = badge.render(label, f"{value:.2f}", badge.cvi_color(value))
+    resp = Response(svg, mimetype=badge.CONTENT_TYPE)
+    resp.headers["Cache-Control"] = "no-cache, max-age=0"
+    return resp
 
 
 @app.route("/metrics", methods=["GET"])

@@ -842,6 +842,23 @@ class OceanicOSAppTests(unittest.TestCase):
         tiers = pricing.get_json()["tiers"]
         self.assertEqual([tier["price"] for tier in tiers], [8500, 25500, 85000])
 
+    def test_cvi_badge_is_svg_matching_the_index(self):
+        current = self.client.get("/cvi").get_json()["cvi"]
+        resp = self.client.get("/badge/cvi.svg")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.mimetype, "image/svg+xml")
+        self.assertIn("no-cache", resp.headers.get("Cache-Control", ""))
+        body = resp.get_data(as_text=True)
+        self.assertTrue(body.startswith("<svg"))
+        self.assertIn("verification", body)
+        # the badge value is the live CVI to two places
+        self.assertIn(f"{current:.2f}", body)
+
+    def test_cvi_badge_label_override(self):
+        body = self.client.get("/badge/cvi.svg?label=trust").get_data(as_text=True)
+        self.assertIn("trust", body)
+        self.assertIn('aria-label="trust:', body)
+
         txt = self.client.get("/builds/export.txt")
         self.assertEqual(txt.status_code, 200)
         self.assertIn("text/plain", txt.content_type)
