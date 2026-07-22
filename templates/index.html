@@ -122,8 +122,10 @@
           <div class="row" style="margin-top:0.6rem">
             <button class="ghost" id="verify-button" style="flex:0 0 auto">Re-verify Chain</button>
             <button class="ghost" id="checkpoint-button" style="flex:0 0 auto">Seal Checkpoint (admin)</button>
+            <button class="ghost" id="audit-button" style="flex:0 0 auto">Run Drift Audit (admin)</button>
           </div>
           <div id="checkpoint-msg" class="hint" style="margin-top:0.4rem"></div>
+          <div id="audits" class="hint" style="margin-top:0.6rem">drift audit trail…</div>
         </div>
 
         <div class="panel">
@@ -357,14 +359,35 @@
       });
 
       // ---- integrity buttons ----
-      $('verify-button').addEventListener('click', loadIntegrity);
+      $('verify-button').addEventListener('click', () => { loadIntegrity(); loadAudits(); });
       $('checkpoint-button').addEventListener('click', async () => {
         const { ok, status, data } = await fetchJson('/attestations/checkpoint', { method: 'POST', headers: authHeaders() });
         $('checkpoint-msg').innerHTML = ok
           ? `<span class="ok">sealed</span> head ${esc((data.head_hash || '').slice(0, 16))}… @ length ${data.length}`
           : `<span class="bad">${status}: ${esc(data.error || 'need a steward token + OCEANICOS_SIGNING_KEY')}</span>`;
-        loadIntegrity(); refreshDashboard();
+        loadIntegrity(); loadAudits(); refreshDashboard();
       });
+      $('audit-button').addEventListener('click', async () => {
+        const { ok, status, data } = await fetchJson('/attestations/audit', { method: 'POST', headers: authHeaders() });
+        $('checkpoint-msg').innerHTML = ok
+          ? `<span class="${data.intact ? 'ok' : 'bad'}">audit recorded</span> — ${data.intact ? 'intact' : 'BROKEN @ ' + data.broken_at}`
+          : `<span class="bad">${status}: steward token required to run an audit</span>`;
+        loadAudits();
+      });
+
+      // ---- drift audit trail (round 45) ----
+      async function loadAudits() {
+        const { data } = await fetchJson('/attestations/audits?limit=6');
+        if (!data || !data.length) { $('audits').innerHTML = '<span class="hint">no drift audits yet — run one, or seal a checkpoint.</span>'; return; }
+        const rows = data.map((a) => {
+          const when = (a.checked_at || '').replace('T', ' ').slice(0, 19);
+          const state = a.intact
+            ? `<span class="ok">intact</span>${a.trustworthy ? ' · <span class="ok">trustworthy</span>' : ''}`
+            : `<span class="bad">BROKEN @ ${a.broken_at}</span>`;
+          return `<tr><td class="dim">${esc(when)}</td><td>len ${a.length}</td><td>${state}</td></tr>`;
+        }).join('');
+        $('audits').innerHTML = `<div class="dim" style="margin-bottom:0.2rem">drift audit trail (newest first)</div><table>${rows}</table>`;
+      }
 
       // ---- held review ----
       async function loadHeldQueue() {
@@ -461,7 +484,7 @@
       const splash = $('boot-splash');
       if (splash) splash.addEventListener('animationend', () => splash.remove());
 
-      loadObserver(); loadTiles(); loadIntegrity(); loadPricing(); loadStats(); loadAdr();
+      loadObserver(); loadTiles(); loadIntegrity(); loadPricing(); loadStats(); loadAdr(); loadAudits();
     </script>
   </body>
 </html>
