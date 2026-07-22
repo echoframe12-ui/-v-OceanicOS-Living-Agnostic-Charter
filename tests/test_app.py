@@ -268,6 +268,23 @@ class OceanicOSAppTests(unittest.TestCase):
             engine._signing_key = original_key
             app_module.auth_registry.admin_users.discard("config-steward")
 
+    def test_every_response_carries_a_request_id(self):
+        resp = self.client.get("/health")
+        self.assertTrue(resp.headers.get("X-Request-ID"))
+
+    def test_request_id_is_propagated_from_the_caller(self):
+        resp = self.client.get("/health", headers={"X-Request-ID": "trace-xyz-1"})
+        self.assertEqual(resp.headers.get("X-Request-ID"), "trace-xyz-1")
+
+    def test_malicious_request_id_is_sanitized_not_reflected_raw(self):
+        # werkzeug rejects newlines at the header level (defense in depth); the
+        # sanitizer strips the characters that do get through (spaces, pipes, …)
+        resp = self.client.get("/health", headers={"X-Request-ID": "a b|c<script>"})
+        rid = resp.headers.get("X-Request-ID")
+        self.assertNotIn(" ", rid)
+        self.assertNotIn("<", rid)
+        self.assertEqual(rid, "abcscript")
+
     def test_readyz_reports_ready(self):
         resp = self.client.get("/readyz")
         self.assertEqual(resp.status_code, 200)

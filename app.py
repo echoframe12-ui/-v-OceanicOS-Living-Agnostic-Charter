@@ -2,12 +2,16 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, render_template, request
+
+import requestlog
 
 import anchor
 import identity
@@ -38,6 +42,46 @@ from universal_builder import UniversalBuilder
 from workflows import WorkflowEngine
 
 app = Flask(__name__)
+
+access_logger = logging.getLogger("oceanicos.access")
+if not access_logger.handlers:
+    # Emit one JSON object per line to stderr; the message is already serialized,
+    # so the formatter passes it through untouched. propagate=False keeps it out
+    # of the root logger (no duplicate lines).
+    _access_handler = logging.StreamHandler()
+    _access_handler.setFormatter(logging.Formatter("%(message)s"))
+    access_logger.addHandler(_access_handler)
+    access_logger.setLevel(logging.INFO)
+    access_logger.propagate = False
+
+
+@app.before_request
+def _assign_request_id():
+    g.request_id = requestlog.clean_request_id(request.headers.get("X-Request-ID"))
+    g.start_time = time.perf_counter()
+
+
+@app.after_request
+def _log_access(response):
+    start = getattr(g, "start_time", None)
+    latency_ms = round((time.perf_counter() - start) * 1000, 2) if start else 0.0
+    request_id = getattr(g, "request_id", "")
+    response.headers["X-Request-ID"] = request_id
+    access_logger.info(
+        json.dumps(
+            requestlog.access_record(
+                request_id,
+                request.method,
+                request.path,
+                response.status_code,
+                getattr(g, "actor", None),
+                latency_ms,
+            )
+        )
+    )
+    return response
+
+
 service = OceanicOSService()
 workflow_engine = WorkflowEngine()
 planner = Planner()
