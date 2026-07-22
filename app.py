@@ -1087,6 +1087,43 @@ def _effective_config() -> dict:
     }
 
 
+def _config_warnings(cfg: dict) -> list[dict]:
+    """Flag risky or degraded configurations so misconfig doesn't fail silently.
+
+    Pure function over the effective config: each finding is a `{level, message}`
+    (`warn` for a gap that undermines a feature the operator seems to want,
+    `info` for a deliberate-but-notable posture). It reports the shape of the
+    running config, not the secrets in it.
+    """
+    findings: list[dict] = []
+    if cfg["signing_enabled"] and not cfg["checkpoint"]["auto"]:
+        findings.append({
+            "level": "warn",
+            "message": "signing key set but auto-checkpointing off — the head is "
+            "sealed only on a manual POST; set OCEANICOS_CHECKPOINT_EVERY",
+        })
+    if not cfg["signing_enabled"]:
+        findings.append({
+            "level": "info",
+            "message": "no signing key — the ledger is tamper-evident but not "
+            "tamper-resistant (checkpoints unavailable)",
+        })
+    if cfg["admins"] == 0:
+        findings.append({
+            "level": "warn",
+            "message": "no admin users — held attestations cannot be reviewed; "
+            "set OCEANICOS_ADMIN_USERS",
+        })
+    if not cfg["require_auth"]:
+        findings.append({
+            "level": "info",
+            "message": "auth enforcement off — the open path is unmetered",
+        })
+    if cfg["held_sla_seconds"] == 0:
+        findings.append({"level": "info", "message": "held-review SLA disabled"})
+    return findings
+
+
 @app.route("/config", methods=["GET"])
 @require_admin
 def effective_config():
@@ -1094,9 +1131,11 @@ def effective_config():
 
     Stewardship introspection: reports the operational config from the live
     objects (auth mode, quota window and tiers, held SLA, checkpoint policy,
-    whether signing is enabled) without ever exposing a secret.
+    whether signing is enabled) plus warnings for risky setups — never a secret.
     """
-    return jsonify(_effective_config())
+    cfg = _effective_config()
+    cfg["warnings"] = _config_warnings(cfg)
+    return jsonify(cfg)
 
 
 @app.route("/me/builds", methods=["GET"])

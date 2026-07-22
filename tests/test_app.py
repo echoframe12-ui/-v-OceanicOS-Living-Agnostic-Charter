@@ -340,6 +340,43 @@ class OceanicOSAppTests(unittest.TestCase):
             self.client.get("/attestations?min_confidence=high").status_code, 400
         )
 
+    def test_config_warnings_flag_risky_setups(self):
+        # no signing key, auto off, no admins, auth off -> the risky combination
+        cfg = {
+            "signing_enabled": False,
+            "checkpoint": {"auto": False},
+            "admins": 0,
+            "require_auth": False,
+            "held_sla_seconds": 86400,
+        }
+        warnings = app_module._config_warnings(cfg)
+        messages = " ".join(w["message"] for w in warnings)
+        self.assertIn("tamper-evident but not", messages)  # no signing key
+        self.assertIn("held attestations cannot be reviewed", messages)  # no admins
+        self.assertTrue(any(w["level"] == "warn" for w in warnings))
+
+        # signing on but auto off -> the manual-seal warning
+        cfg2 = {
+            "signing_enabled": True,
+            "checkpoint": {"auto": False},
+            "admins": 1,
+            "require_auth": True,
+            "held_sla_seconds": 60,
+        }
+        self.assertTrue(
+            any("auto-checkpointing off" in w["message"] for w in app_module._config_warnings(cfg2))
+        )
+
+        # a healthy config -> no warn-level findings
+        cfg3 = {
+            "signing_enabled": True,
+            "checkpoint": {"auto": True},
+            "admins": 2,
+            "require_auth": True,
+            "held_sla_seconds": 60,
+        }
+        self.assertFalse(any(w["level"] == "warn" for w in app_module._config_warnings(cfg3)))
+
     def test_config_is_admin_gated_and_never_leaks_the_signing_key(self):
         engine = app_module.attestation_engine
         app_module.auth_registry.admin_users.add("config-steward")
@@ -371,6 +408,7 @@ class OceanicOSAppTests(unittest.TestCase):
             self.assertIn("checkpoint", cfg)
             self.assertTrue(cfg["signing_enabled"])  # a key is set
             self.assertTrue(cfg["model_adapters"])
+            self.assertIn("warnings", cfg)  # config warnings surfaced
             # the crux: the secret itself is nowhere in the response
             self.assertNotIn("super-secret-signing-key", json.dumps(cfg))
         finally:
