@@ -271,7 +271,7 @@
         const trend = (history || []).map((p) => p.cvi);
         $('integrity').innerHTML = `
           <table>
-            <tr><th>CVI</th><td>${cvi.cvi} <span class="dim">(mean ${cvi.mean_confidence}, held ${cvi.held_ratio}, n=${cvi.samples})</span></td></tr>
+            <tr><th>CVI</th><td>${cvi.cvi} <span class="dim">(mean ${cvi.mean_confidence} ${cvi.confidence_interval ? '[' + cvi.confidence_interval[0] + '–' + cvi.confidence_interval[1] + ']' : ''}, held ${cvi.held_ratio}, n=${cvi.samples})</span></td></tr>
             <tr><th>trend</th><td><span class="ok" style="letter-spacing:1px">${sparkline(trend)}</span> <span class="dim">${trend.length} pts</span></td></tr>
             <tr><th>chain</th><td class="${chain.intact ? 'ok' : 'bad'}">${chain.intact ? 'INTACT' : 'BROKEN @ ' + chain.broken_at} · length ${chain.length}</td></tr>
             <tr><th>checkpoint</th><td>${trust}</td></tr>

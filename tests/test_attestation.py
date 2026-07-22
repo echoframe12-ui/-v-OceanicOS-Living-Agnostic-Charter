@@ -120,6 +120,31 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(report["held_ratio"], 0.5)
         self.assertEqual(report["cvi"], 0.4)
 
+    def test_cvi_reports_a_confidence_interval(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.5)  # spread: mean 0.7, std 0.2
+        report = engine.cvi()
+        self.assertEqual(report["mean_confidence"], 0.7)
+        self.assertEqual(report["confidence_interval"], [0.5, 0.9])
+
+    def test_single_attestation_interval_is_a_point(self):
+        engine = AttestationEngine(self.db_path)
+        c = engine.attest("a", "one", [], 0.83)["confidence"]
+        self.assertEqual(engine.cvi()["confidence_interval"], [c, c])  # std 0
+
+    def test_interval_clamps_within_unit_range(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.99)
+        engine.attest("b", "two", [], 0.99)
+        low, high = engine.cvi()["confidence_interval"]
+        self.assertGreaterEqual(low, 0.0)
+        self.assertLessEqual(high, 1.0)
+
+    def test_empty_record_interval_is_zeroed(self):
+        engine = AttestationEngine(self.db_path)
+        self.assertEqual(engine.cvi()["confidence_interval"], [0.0, 0.0])
+
     def test_cvi_credits_reviewed_released_items(self):
         engine = AttestationEngine(self.db_path)
         engine.attest("a", "one", [], 0.9)

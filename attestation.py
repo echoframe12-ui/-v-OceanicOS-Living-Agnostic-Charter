@@ -542,8 +542,19 @@ class AttestationEngine:
         scope = self.list(actor)
         total = len(scope)
         if total == 0:
-            return {"cvi": 0.0, "samples": 0, "mean_confidence": 0.0, "held_ratio": 0.0}
-        mean_confidence = sum(a["confidence"] for a in scope) / total
+            return {
+                "cvi": 0.0,
+                "samples": 0,
+                "mean_confidence": 0.0,
+                "held_ratio": 0.0,
+                "confidence_interval": [0.0, 0.0],
+            }
+        confidences = [a["confidence"] for a in scope]
+        mean_confidence = sum(confidences) / total
+        # population standard deviation of the confidence sample — the spread the
+        # mean hides. The interval is mean ± std, so the headline carries its own
+        # uncertainty: wide when the record disagrees, a point when it's uniform.
+        std = (sum((c - mean_confidence) ** 2 for c in confidences) / total) ** 0.5
         held = [
             a for a in scope if a["status"] == "held" and a["id"] not in released
         ]
@@ -553,6 +564,10 @@ class AttestationEngine:
             "samples": total,
             "mean_confidence": round(mean_confidence, 3),
             "held_ratio": round(held_ratio, 3),
+            "confidence_interval": [
+                round(max(0.0, mean_confidence - std), 3),
+                round(min(1.0, mean_confidence + std), 3),
+            ],
         }
 
     def stats(self, actor: str | None = None) -> dict[str, Any]:

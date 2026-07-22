@@ -828,7 +828,14 @@ class OceanicOSAppTests(unittest.TestCase):
     def test_vaas_endpoints(self):
         cvi = self.client.get("/cvi")
         self.assertEqual(cvi.status_code, 200)
-        self.assertIn("cvi", cvi.get_json())
+        payload = cvi.get_json()
+        self.assertIn("cvi", payload)
+        # the trust index carries its own spread as an interval
+        interval = payload["confidence_interval"]
+        self.assertEqual(len(interval), 2)
+        self.assertGreaterEqual(interval[0], 0.0)
+        self.assertLessEqual(interval[1], 1.0)
+        self.assertLessEqual(interval[0], interval[1])
 
         pricing = self.client.get("/pricing")
         self.assertEqual(pricing.status_code, 200)
