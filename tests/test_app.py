@@ -890,6 +890,22 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("Held pending", body)
         self.assertIn("drift audit", body)
 
+    def test_status_json_twin_matches_the_page(self):
+        app_module.attestation_engine.attest("status-json-doc", "body", ["plan"], 0.9)
+        resp = self.client.get("/status.json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/json", resp.content_type)
+        data = resp.get_json()
+        # the single posture verdict is one of the three, and machine-readable
+        self.assertIn(data["posture"], ("TRUSTWORTHY", "INTACT", "BROKEN"))
+        # posture_class is presentation-only and must not leak into the JSON
+        self.assertNotIn("posture_class", data)
+        # the underlying signals are all present and agree with /cvi
+        self.assertEqual(data["cvi"]["cvi"], self.client.get("/cvi").get_json()["cvi"])
+        for key in ("verify", "held_pending", "held_breached", "checkpoint",
+                    "audit", "attestations_total", "threshold", "generated_at"):
+            self.assertIn(key, data)
+
         txt = self.client.get("/builds/export.txt")
         self.assertEqual(txt.status_code, 200)
         self.assertIn("text/plain", txt.content_type)

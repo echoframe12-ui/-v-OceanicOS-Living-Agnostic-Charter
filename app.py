@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
+from typing import Any
 
 from flask import Flask, Response, g, jsonify, render_template, request
 
@@ -757,16 +758,13 @@ def cvi_badge():
     return resp
 
 
-@app.route("/status", methods=["GET"])
-def status_page():
-    """A public, server-rendered trust posture page — the platform's status board.
+def _status_snapshot() -> dict[str, Any]:
+    """Assemble the live trust posture once, for both `/status` and `/status.json`.
 
-    Read-only and unauthenticated, distinct from the operator console (`/`): no
-    actions, just the live verification posture at a glance — the CVI and its
-    spread, chain integrity and its seal, the held queue and its SLA, the last
-    checkpoint and the last drift audit. Rendered server-side so it works with no
-    JavaScript, and it embeds the CVI badge (`/badge/cvi.svg`). The one page you
-    link someone to answer "is the verification layer healthy right now?".
+    A single source so the human page and the machine twin can never disagree.
+    Reduces the record to a single `posture` verdict — `TRUSTWORTHY` (chain
+    intact, sealed head reproduced and signed), `INTACT` (intact but not yet
+    sealed), or `BROKEN` (with the broken-at id) — plus the underlying signals.
     """
     verify = attestation_engine.verify()
     released = held_review_log.released_ids()
@@ -780,30 +778,55 @@ def status_page():
             att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS
         ).get("sla_breached")
     )
-    cp = attestation_engine.latest_checkpoint()
-    audit = drift_audit_log.latest()
     if not verify["intact"]:
         posture, posture_class = "BROKEN", "bad"
     elif verify.get("trustworthy"):
         posture, posture_class = "TRUSTWORTHY", "ok"
     else:
         posture, posture_class = "INTACT", "warn"
-    return render_template(
-        "status.html",
-        posture=posture,
-        posture_class=posture_class,
-        verify=verify,
-        cvi=cvi,
-        attestations_total=len(attestation_engine.list()),
-        held_pending=len(held_pending),
-        held_breached=held_breached,
-        builds_total=len(service.list_builds()),
-        users_total=len(auth_registry.list_users()),
-        checkpoint=cp,
-        audit=audit,
-        threshold=CONFIDENCE_THRESHOLD,
-        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    )
+    return {
+        "posture": posture,
+        "posture_class": posture_class,
+        "verify": verify,
+        "cvi": cvi,
+        "attestations_total": len(attestation_engine.list()),
+        "held_pending": len(held_pending),
+        "held_breached": held_breached,
+        "builds_total": len(service.list_builds()),
+        "users_total": len(auth_registry.list_users()),
+        "checkpoint": attestation_engine.latest_checkpoint(),
+        "audit": drift_audit_log.latest(),
+        "threshold": CONFIDENCE_THRESHOLD,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+@app.route("/status", methods=["GET"])
+def status_page():
+    """A public, server-rendered trust posture page — the platform's status board.
+
+    Read-only and unauthenticated, distinct from the operator console (`/`): no
+    actions, just the live verification posture at a glance — the CVI and its
+    spread, chain integrity and its seal, the held queue and its SLA, the last
+    checkpoint and the last drift audit. Rendered server-side so it works with no
+    JavaScript, and it embeds the CVI badge (`/badge/cvi.svg`). The one page you
+    link someone to answer "is the verification layer healthy right now?".
+    """
+    return render_template("status.html", **_status_snapshot())
+
+
+@app.route("/status.json", methods=["GET"])
+def status_json():
+    """The machine-readable twin of `/status` — the whole posture in one call.
+
+    The same `_status_snapshot` the page renders, as JSON, so a monitor or
+    dashboard gets the single `posture` verdict and every underlying signal
+    without scraping HTML or reassembling it from `/cvi`, `/attestations/verify`,
+    and the audit trail separately. `posture_class` (a CSS concern) is dropped.
+    """
+    snapshot = _status_snapshot()
+    snapshot.pop("posture_class", None)
+    return jsonify(snapshot)
 
 
 @app.route("/metrics", methods=["GET"])
