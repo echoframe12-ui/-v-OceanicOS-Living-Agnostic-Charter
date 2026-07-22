@@ -134,10 +134,19 @@ cvi_history = CviHistory(str(service.db_path))
 HELD_SLA_SECONDS = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
 
 
-def _snapshot_cvi() -> None:
-    """Record the current platform CVI when it has moved (round 29)."""
-    snapshot = attestation_engine.cvi(released_ids=held_review_log.released_ids())
-    cvi_history.record_if_changed(snapshot)
+def _snapshot_cvi(actor: str | None = None) -> None:
+    """Record the platform CVI when it moves, and the actor's own when given.
+
+    The platform series is always updated; when a named actor drove the change
+    (a build), their personal CVI trend is recorded too, so `/me/cvi/history`
+    reflects that actor's verification quality over time (round 36).
+    """
+    released = held_review_log.released_ids()
+    cvi_history.record_if_changed(attestation_engine.cvi(released_ids=released))
+    if actor and actor != ANONYMOUS:
+        cvi_history.record_if_changed(
+            attestation_engine.cvi(actor=actor, released_ids=released), actor=actor
+        )
 app.config["REQUIRE_AUTH"] = os.getenv("OCEANICOS_REQUIRE_AUTH", "0") == "1"
 app.config["AUTH_REGISTRY"] = auth_registry
 builder = UniversalBuilder(
@@ -862,7 +871,7 @@ def run_builder():
 
     result = builder.run(task, context, actor=g.actor)
     usage_log.record(g.actor, "build", g.tier, task)
-    _snapshot_cvi()
+    _snapshot_cvi(g.actor)  # platform + this actor's trend
     result["dashboard"] = dashboard.summary()
     resp = jsonify(result)
     if g.actor != ANONYMOUS:
@@ -1029,6 +1038,16 @@ def my_cvi():
             actor=g.actor, released_ids=held_review_log.released_ids()
         )
     )
+
+
+@app.route("/me/cvi/history", methods=["GET"])
+@require_auth
+def my_cvi_history():
+    """The authenticated actor's own CVI trend over time."""
+    limit = request.args.get("limit", type=int) if "limit" in request.args else None
+    if "limit" in request.args and limit is None:
+        return jsonify({"error": "limit must be an integer"}), 400
+    return jsonify(cvi_history.list(actor=g.actor, limit=limit))
 
 
 @app.route("/me/quota", methods=["GET"])

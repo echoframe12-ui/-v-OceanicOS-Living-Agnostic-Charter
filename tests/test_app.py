@@ -302,6 +302,25 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("/metrics", spec["paths"])
         self.assertIn("/openapi.json", spec["paths"])  # it documents itself too
 
+    def test_me_cvi_history_tracks_the_actor(self):
+        token = self.client.post(
+            "/auth/register", data=json.dumps({"username": "trend-user"}),
+            content_type="application/json",
+        ).get_json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+        self.client.post(
+            "/builder/run", data=json.dumps({"task": "my build", "context": "c"}),
+            content_type="application/json", headers=auth,
+        )
+        series = self.client.get("/me/cvi/history", headers=auth).get_json()
+        self.assertTrue(series)
+        # the latest personal point matches /me/cvi
+        mine = self.client.get("/me/cvi", headers=auth).get_json()["cvi"]
+        self.assertEqual(series[-1]["cvi"], mine)
+        self.assertEqual(series[-1]["actor"], "trend-user")
+        # validation
+        self.assertEqual(self.client.get("/me/cvi/history?limit=x", headers=auth).status_code, 400)
+
     def test_cvi_history_records_on_build_and_matches_cvi(self):
         before = len(self.client.get("/cvi/history").get_json())
         self.client.post(

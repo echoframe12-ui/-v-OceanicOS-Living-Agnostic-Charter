@@ -142,6 +142,7 @@ Use the endpoints:
 - GET /me/attestations
 - GET /me/memory
 - GET /me/cvi
+- GET /me/cvi/history
 - GET /me/quota
 - GET /me/usage
 - GET /admin/overview
