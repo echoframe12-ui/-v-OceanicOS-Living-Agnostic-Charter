@@ -522,6 +522,21 @@ def attestation_receipt(att_id: int):
     return jsonify(receipt)
 
 
+@app.route("/attestations/<int:att_id>/verify", methods=["GET"])
+def verify_attestation_entry(att_id: int):
+    """Verify one attestation's integrity in place — the per-item chain check.
+
+    Recomputes this entry's link hash from its recorded fields and its
+    predecessor, reporting whether it is untampered and correctly linked at its
+    position. Where `/attestations/verify` checks the whole chain, this checks a
+    single entry. Public, like the receipt it backs. 404 for a missing id.
+    """
+    result = attestation_engine.verify_entry(att_id)
+    if result is None:
+        return jsonify({"error": f"no attestation #{att_id}"}), 404
+    return jsonify(result)
+
+
 @app.route("/attestations/audit", methods=["POST"])
 @require_admin
 def run_drift_audit():

@@ -476,15 +476,55 @@ class AttestationEngine:
         if entry is None:
             return None
         cp = self.latest_checkpoint()
+        expected_prev = rows[position - 2]["entry_hash"] if position > 1 else GENESIS_HASH
+        entry_intact = (
+            entry["prev_hash"] == expected_prev
+            and entry["entry_hash"] == link_hash(entry["prev_hash"], entry)
+        )
         return {
             "attestation": entry,
             "chain_position": position,
             "chain_length": len(rows),
             "chain_intact": self.verify_chain()["intact"],
+            "entry_intact": entry_intact,
             "sealed": cp is not None and position <= cp["length"],
             "checkpoint": (
                 {"length": cp["length"], "created_at": cp["created_at"]} if cp else None
             ),
+        }
+
+    def verify_entry(self, att_id: int) -> dict[str, Any] | None:
+        """Verify one attestation's integrity in place — the per-item chain check.
+
+        Recomputes the entry's own `link_hash` from its recorded fields and its
+        predecessor's hash, and confirms both that the recomputed value matches
+        the stored `entry_hash` and that the stored `prev_hash` matches the actual
+        predecessor (GENESIS for the first row). Where `verify` answers "is the
+        whole chain intact", this answers "is *this* entry untampered and
+        correctly linked at its position" — the focused proof behind a receipt.
+        Returns None for a missing id.
+        """
+        rows = self._rows()
+        index = None
+        for i, row in enumerate(rows):
+            if row["id"] == att_id:
+                index = i
+                break
+        if index is None:
+            return None
+        entry = rows[index]
+        expected_prev = rows[index - 1]["entry_hash"] if index > 0 else GENESIS_HASH
+        recomputed = link_hash(entry["prev_hash"], entry)
+        prev_ok = entry["prev_hash"] == expected_prev
+        hash_ok = entry["entry_hash"] == recomputed
+        return {
+            "id": att_id,
+            "chain_position": index + 1,
+            "prev_hash_matches": prev_ok,
+            "entry_hash_matches": hash_ok,
+            "intact": prev_ok and hash_ok,
+            "expected_prev_hash": expected_prev,
+            "recomputed_entry_hash": recomputed,
         }
 
     def export(self) -> dict[str, Any]:

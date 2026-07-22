@@ -304,8 +304,23 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("chain_position", receipt)
         self.assertIn("sealed", receipt)
         self.assertTrue(receipt["chain_intact"])
+        # the receipt certifies its own entry, not just the whole chain
+        self.assertTrue(receipt["entry_intact"])
         # missing id -> 404
         self.assertEqual(self.client.get("/attestations/999999/receipt").status_code, 404)
+
+    def test_attestation_verify_entry_endpoint(self):
+        engine = app_module.attestation_engine
+        att = engine.attest("verify-entry-subject", "content", ["plan"], 0.9)
+        resp = self.client.get(f"/attestations/{att['id']}/verify")
+        self.assertEqual(resp.status_code, 200)
+        result = resp.get_json()
+        self.assertTrue(result["intact"])
+        self.assertTrue(result["entry_hash_matches"])
+        self.assertTrue(result["prev_hash_matches"])
+        self.assertEqual(result["id"], att["id"])
+        # missing id -> 404
+        self.assertEqual(self.client.get("/attestations/999999/verify").status_code, 404)
 
     def test_attestations_stats_endpoint(self):
         engine = app_module.attestation_engine
