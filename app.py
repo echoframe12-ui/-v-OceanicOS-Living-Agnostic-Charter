@@ -21,6 +21,7 @@ import openapi
 import readiness
 from agent import AgentLoop
 from cvi_history import CviHistory
+from drift_audit import DriftAuditLog
 from verify_ledger import verify_bundle
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
@@ -131,6 +132,7 @@ auth_registry = AuthRegistry()
 usage_log = UsageLog(str(service.db_path))
 held_review_log = HeldReviewLog(str(service.db_path))
 cvi_history = CviHistory(str(service.db_path))
+drift_audit_log = DriftAuditLog(str(service.db_path))
 # Time-to-decision SLA for held attestations (seconds). 0 disables breach flags.
 HELD_SLA_SECONDS = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
 
@@ -519,6 +521,26 @@ def attestation_receipt(att_id: int):
     return jsonify(receipt)
 
 
+@app.route("/attestations/audit", methods=["POST"])
+@require_admin
+def run_drift_audit():
+    """Run a drift audit — verify the ledger and record the result on the trail.
+
+    Verifiable is not verified: this looks, and remembers having looked. A
+    stewardship action; the recorded entry proves the check happened and when.
+    """
+    return jsonify(drift_audit_log.record(attestation_engine.verify()))
+
+
+@app.route("/attestations/audits", methods=["GET"])
+def list_drift_audits():
+    """The drift-audit trail — proof the ledger has been verified over time."""
+    limit = request.args.get("limit", type=int) if "limit" in request.args else None
+    if "limit" in request.args and limit is None:
+        return jsonify({"error": "limit must be an integer"}), 400
+    return jsonify(drift_audit_log.list(limit=limit))
+
+
 @app.route("/attestations/lookup", methods=["POST"])
 def lookup_attestation():
     """Content-addressable lookup — was this exact output attested?
@@ -619,9 +641,12 @@ def checkpoint_attestations():
             503,
         )
     try:
-        return jsonify(attestation_engine.checkpoint())
+        sealed = attestation_engine.checkpoint()
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 409
+    # sealing the head is a natural audit point — record one (continuous validation)
+    drift_audit_log.record(attestation_engine.verify())
+    return jsonify(sealed)
 
 
 @app.route("/attestations/export", methods=["GET"])
@@ -731,6 +756,7 @@ def prometheus_metrics():
         {"name": "oceanicos_chain_trustworthy", "help": "Chain intact and signed head verified (1 yes, 0 no)", "value": bool(verify.get("trustworthy"))},
         {"name": "oceanicos_checkpoint_auto", "help": "Automatic checkpoint sealing enabled (1 yes, 0 no)", "value": policy["auto"]},
         {"name": "oceanicos_model_adapters", "help": "Registered dissent-panel adapters", "value": len(model_router.list_adapters())},
+        {"name": "oceanicos_last_audit_intact", "help": "Latest drift audit found the chain intact (1 yes/none, 0 broken)", "value": (drift_audit_log.latest() or {}).get("intact", True)},
     ]
     return Response(metrics.render(snapshot), mimetype=metrics.CONTENT_TYPE)
 

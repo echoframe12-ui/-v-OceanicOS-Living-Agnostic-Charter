@@ -128,6 +128,8 @@ Use the endpoints:
 - GET /attestations/<id>/reviews
 - GET /attestations/<id>/receipt
 - GET /attestations/verify
+- POST /attestations/audit
+- GET /attestations/audits
 - POST /attestations/verify-bundle
 - POST /attestations/checkpoint
 - GET /attestations/export

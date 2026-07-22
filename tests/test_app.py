@@ -692,6 +692,43 @@ class OceanicOSAppTests(unittest.TestCase):
             400,
         )
 
+    def test_drift_audit_records_and_lists(self):
+        app_module.auth_registry.admin_users.add("drift-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register", data=json.dumps({"username": "drift-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register", data=json.dumps({"username": "drift-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            # admin-gated
+            self.assertEqual(
+                self.client.post("/attestations/audit", headers={"Authorization": f"Bearer {member}"}).status_code,
+                403,
+            )
+
+            before = len(self.client.get("/attestations/audits").get_json())
+            audit = self.client.post(
+                "/attestations/audit", headers={"Authorization": f"Bearer {admin}"}
+            )
+            self.assertEqual(audit.status_code, 200)
+            entry = audit.get_json()
+            self.assertTrue(entry["intact"])
+            self.assertIn("checked_at", entry)
+
+            after = self.client.get("/attestations/audits").get_json()
+            self.assertEqual(len(after), before + 1)
+            self.assertEqual(after[0]["id"], entry["id"])  # newest first
+        finally:
+            app_module.auth_registry.admin_users.discard("drift-steward")
+
+    def test_metrics_carries_last_audit_intact(self):
+        body = self.client.get("/metrics").get_data(as_text=True)
+        self.assertIn("oceanicos_last_audit_intact", body)
+
     def test_attestations_verify_endpoint_reports_an_intact_chain(self):
         verify = self.client.get("/attestations/verify")
         self.assertEqual(verify.status_code, 200)
