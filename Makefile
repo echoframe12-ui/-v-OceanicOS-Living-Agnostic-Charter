@@ -14,6 +14,7 @@ help:
 	@echo "  make stack         test -> docker-build -> docker-run (the full stack)"
 	@echo "  make verify-ledger verify an exported ledger offline (BUNDLE=path [KEY=secret])"
 	@echo "  make boot          instantiate the stack from boot/init.v1 (the invocation)"
+	@echo "  make doctor        check readiness, verify the ledger, print stats (offline)"
 	@echo "  make clean         remove local db, workspace, and caches"
 
 install:
@@ -43,6 +44,10 @@ stack: test docker-build
 # Usage: make verify-ledger BUNDLE=bundle.json [KEY=your-signing-key]
 verify-ledger:
 	python verify_ledger.py $(if $(KEY),--key $(KEY),) "$(BUNDLE)"
+
+# Operator CLI: check the ledger and dependencies offline, no server needed.
+doctor:
+	python oceanic_os.py ready && python oceanic_os.py verify && python oceanic_os.py stats
 
 # The invocation: boot the stack from the ratified manifest.
 boot:
