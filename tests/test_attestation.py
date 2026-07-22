@@ -293,6 +293,57 @@ class SignedCheckpointTests(unittest.TestCase):
         self.assertEqual(checkpoints[-1]["length"], 2)
 
 
+class StatsTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.engine = AttestationEngine(self.db_path)
+        self.engine.attest("a", "1", [], 0.9, actor="alice")   # attested, 0.75-1.00
+        self.engine.attest("b", "2", [], 0.6, actor="alice")   # held, 0.50-0.75
+        self.engine.attest("c", "3", [], 0.2, actor="bob")     # held, 0.00-0.25
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_empty_record_is_zeroed(self):
+        empty = AttestationEngine(self.db_path + ".empty")
+        try:
+            s = empty.stats()
+            self.assertEqual(s["total"], 0)
+            self.assertEqual(s["by_actor"], {})
+            self.assertEqual(sum(s["confidence_buckets"].values()), 0)
+        finally:
+            if os.path.exists(self.db_path + ".empty"):
+                os.remove(self.db_path + ".empty")
+
+    def test_totals_and_ratio_match_the_record(self):
+        s = self.engine.stats()
+        self.assertEqual(s["total"], 3)
+        self.assertEqual(s["attested"], 1)
+        self.assertEqual(s["held"], 2)
+        self.assertEqual(s["held_ratio"], round(2 / 3, 3))
+        # held ratio agrees with cvi's
+        self.assertEqual(s["held_ratio"], self.engine.cvi()["held_ratio"])
+
+    def test_confidence_range_and_histogram(self):
+        s = self.engine.stats()
+        self.assertEqual(s["min_confidence"], 0.2)
+        self.assertEqual(s["max_confidence"], 0.9)
+        self.assertEqual(s["confidence_buckets"]["0.75-1.00"], 1)
+        self.assertEqual(s["confidence_buckets"]["0.50-0.75"], 1)
+        self.assertEqual(s["confidence_buckets"]["0.00-0.25"], 1)
+
+    def test_by_actor_breakdown(self):
+        self.assertEqual(self.engine.stats()["by_actor"], {"alice": 2, "bob": 1})
+
+    def test_scoping_narrows_the_stats(self):
+        s = self.engine.stats(actor="alice")
+        self.assertEqual(s["total"], 2)
+        self.assertEqual(s["by_actor"], {"alice": 2})
+
+
 class SearchTests(unittest.TestCase):
     def setUp(self):
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")

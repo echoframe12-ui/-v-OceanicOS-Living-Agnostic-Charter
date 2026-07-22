@@ -505,6 +505,16 @@ def list_held_reviews(att_id: int):
     return jsonify(held_review_log.list(att_id))
 
 
+@app.route("/attestations/stats", methods=["GET"])
+def attestation_stats():
+    """Aggregate shape of the record — totals, confidence histogram, by-actor.
+
+    Reuses the engine's scan, so the held ratio here matches `/cvi`'s. `?actor=`
+    scopes it. Public and aggregate, like `/cvi`.
+    """
+    return jsonify(attestation_engine.stats(actor=request.args.get("actor")))
+
+
 @app.route("/attestations/verify", methods=["GET"])
 def verify_attestations():
     """Confirm the ledger has not been tampered with.

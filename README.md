@@ -120,6 +120,7 @@ Use the endpoints:
 - GET /builds/export
 - GET /builds/export.txt
 - GET /attestations
+- GET /attestations/stats
 - GET /attestations/held
 - POST /attestations/<id>/review
 - GET /attestations/<id>/reviews

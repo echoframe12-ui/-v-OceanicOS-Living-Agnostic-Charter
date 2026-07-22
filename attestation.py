@@ -511,3 +511,52 @@ class AttestationEngine:
             "mean_confidence": round(mean_confidence, 3),
             "held_ratio": round(held_ratio, 3),
         }
+
+    def stats(self, actor: str | None = None) -> dict[str, Any]:
+        """Aggregate shape of the record — the at-a-glance view.
+
+        Reuses the same scoped scan as `cvi`, so the numbers here can't disagree
+        with the trust index. Reports totals, the confidence range and a quartile
+        histogram, and a per-actor breakdown. An empty record returns a
+        well-formed zeroed report, mirroring `cvi`'s empty-case contract.
+        """
+        scope = self.list(actor)
+        total = len(scope)
+        buckets = {"0.00-0.25": 0, "0.25-0.50": 0, "0.50-0.75": 0, "0.75-1.00": 0}
+        if total == 0:
+            return {
+                "total": 0,
+                "attested": 0,
+                "held": 0,
+                "held_ratio": 0.0,
+                "mean_confidence": 0.0,
+                "min_confidence": 0.0,
+                "max_confidence": 0.0,
+                "by_actor": {},
+                "confidence_buckets": buckets,
+            }
+        confidences = [a["confidence"] for a in scope]
+        held = [a for a in scope if a["status"] == "held"]
+        by_actor: dict[str, int] = {}
+        for entry in scope:
+            by_actor[entry["actor"]] = by_actor.get(entry["actor"], 0) + 1
+        for confidence in confidences:
+            if confidence < 0.25:
+                buckets["0.00-0.25"] += 1
+            elif confidence < 0.50:
+                buckets["0.25-0.50"] += 1
+            elif confidence < 0.75:
+                buckets["0.50-0.75"] += 1
+            else:
+                buckets["0.75-1.00"] += 1
+        return {
+            "total": total,
+            "attested": total - len(held),
+            "held": len(held),
+            "held_ratio": round(len(held) / total, 3),
+            "mean_confidence": round(sum(confidences) / total, 3),
+            "min_confidence": min(confidences),
+            "max_confidence": max(confidences),
+            "by_actor": by_actor,
+            "confidence_buckets": buckets,
+        }

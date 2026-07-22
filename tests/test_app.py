@@ -210,6 +210,18 @@ class OceanicOSAppTests(unittest.TestCase):
         # the rules engine sits on the panel as the deterministic anchor
         self.assertIn("rules-engine", payload["adapters"])
 
+    def test_attestations_stats_endpoint(self):
+        engine = app_module.attestation_engine
+        engine.attest("stats-a", "1", [], 0.95, actor="stats-user")
+        engine.attest("stats-b", "2", [], 0.5, actor="stats-user")  # held
+        stats = self.client.get("/attestations/stats?actor=stats-user").get_json()
+        self.assertEqual(stats["total"], 2)
+        self.assertEqual(stats["held"], 1)
+        self.assertEqual(stats["by_actor"], {"stats-user": 2})
+        self.assertIn("confidence_buckets", stats)
+        # global stats include this actor's records
+        self.assertGreaterEqual(self.client.get("/attestations/stats").get_json()["total"], 2)
+
     def test_attestations_filtering(self):
         engine = app_module.attestation_engine
         engine.attest("filter-attested", "x", [], 0.9, actor="filter-user")
