@@ -20,6 +20,7 @@ import openapi
 import readiness
 from agent import AgentLoop
 from cvi_history import CviHistory
+from verify_ledger import verify_bundle
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine
 from auth import ANONYMOUS, AuthRegistry
@@ -504,6 +505,23 @@ def verify_attestations():
     validates under the current key.
     """
     return jsonify(attestation_engine.verify())
+
+
+@app.route("/attestations/verify-bundle", methods=["POST"])
+def verify_supplied_bundle():
+    """Verify an exported bundle a caller holds — the online twin of verify_ledger.py.
+
+    Runs the same pure `verify_bundle` the offline verifier uses, so a client can
+    check a bundle against a trusted verifier without local tooling. Chain
+    integrity is always checked; the signed checkpoint validates only if this
+    server holds the key the bundle was sealed with (no secret is accepted over
+    the wire).
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("attestations"), list):
+        return jsonify({"error": "body must be an exported ledger bundle"}), 400
+    key = os.getenv("OCEANICOS_SIGNING_KEY") or None
+    return jsonify(verify_bundle(payload, key=key))
 
 
 @app.route("/attestations/checkpoint", methods=["POST"])

@@ -478,6 +478,41 @@ class OceanicOSAppTests(unittest.TestCase):
         finally:
             app_module.auth_registry.admin_users.discard("conflict-steward")
 
+    def test_verify_bundle_endpoint_checks_a_supplied_bundle(self):
+        engine = app_module.attestation_engine
+        engine.attest("vb-a", "one", [], 0.9)
+        engine.attest("vb-b", "two", [], 0.9)
+        bundle = engine.export()
+
+        # a good bundle verifies intact
+        good = self.client.post(
+            "/attestations/verify-bundle",
+            data=json.dumps(bundle),
+            content_type="application/json",
+        )
+        self.assertEqual(good.status_code, 200)
+        self.assertTrue(good.get_json()["intact"])
+
+        # a tampered bundle is caught, with the broken id
+        bundle["attestations"][0]["confidence"] = 0.1
+        bad = self.client.post(
+            "/attestations/verify-bundle",
+            data=json.dumps(bundle),
+            content_type="application/json",
+        ).get_json()
+        self.assertFalse(bad["intact"])
+        self.assertEqual(bad["broken_at"], 1)
+
+        # a malformed body is rejected
+        self.assertEqual(
+            self.client.post(
+                "/attestations/verify-bundle",
+                data=json.dumps({"not": "a bundle"}),
+                content_type="application/json",
+            ).status_code,
+            400,
+        )
+
     def test_attestations_verify_endpoint_reports_an_intact_chain(self):
         verify = self.client.get("/attestations/verify")
         self.assertEqual(verify.status_code, 200)
