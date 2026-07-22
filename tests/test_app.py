@@ -285,6 +285,19 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertNotIn("<", rid)
         self.assertEqual(rid, "abcscript")
 
+    def test_adr_endpoints_serve_the_decision_records(self):
+        index = self.client.get("/adr")
+        self.assertEqual(index.status_code, 200)
+        records = index.get_json()
+        self.assertGreaterEqual(len(records), 30)
+        self.assertTrue(records[0]["title"])
+
+        one = self.client.get("/adr/1")
+        self.assertEqual(one.status_code, 200)
+        self.assertIn("content", one.get_json())
+
+        self.assertEqual(self.client.get("/adr/9999").status_code, 404)
+
     def test_readyz_reports_ready(self):
         resp = self.client.get("/readyz")
         self.assertEqual(resp.status_code, 200)

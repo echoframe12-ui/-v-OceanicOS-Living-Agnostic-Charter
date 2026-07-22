@@ -13,6 +13,7 @@ from flask import Flask, Response, g, jsonify, render_template, request
 
 import requestlog
 
+import adr
 import anchor
 import identity
 import metrics
@@ -813,6 +814,21 @@ def record_decision():
 @app.route("/decisions", methods=["GET"])
 def list_decisions():
     return jsonify(decision_registry.list())
+
+
+@app.route("/adr", methods=["GET"])
+def list_architecture_decisions():
+    """The Architecture Decision Records — why the platform is the way it is."""
+    return jsonify(adr.list_adr())
+
+
+@app.route("/adr/<int:number>", methods=["GET"])
+def get_architecture_decision(number: int):
+    """One ADR with its full text; 404 if there is no such record."""
+    record = adr.get_adr(number)
+    if record is None:
+        return jsonify({"error": f"no ADR #{number}"}), 404
+    return jsonify(record)
 
 
 @app.route("/artifacts", methods=["POST"])

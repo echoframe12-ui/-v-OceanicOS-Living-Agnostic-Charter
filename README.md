@@ -135,6 +135,8 @@ Use the endpoints:
 - GET /pricing
 - GET /observer
 - GET /anchor
+- GET /adr
+- GET /adr/<number>
 - POST /auth/register
 - GET /auth/whoami
 - GET /auth/users
