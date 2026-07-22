@@ -100,6 +100,7 @@ Use the endpoints:
 
 - GET /health
 - GET /readyz
+- GET /status
 - GET /config
 - GET /openapi.json
 - POST /plans
@@ -269,6 +270,7 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - `GET /builds/export` degrades the build ledger gracefully into a spreadsheet (CSV); `GET /builds/export.txt` degrades one step further, into plain text.
 - `GET /cvi` reports the Composite Verification Index — mean attestation confidence discounted by the held ratio; no evidence scores 0.0. It also carries a `confidence_interval` (`mean ± std` of the sample, clamped to `[0,1]`), so the trust index states its own spread — wide when the record disagrees, a point for a single sample (see [DECISIONS/0040](DECISIONS/0040-cvi-confidence-interval.md)).
 - `GET /cvi/history` returns the CVI as a time series — the trend behind the headline number, recorded change-only at the points it can move (a build, a held-review decision), scoped by `?actor=` and capped by `?limit=`. The console draws a sparkline from it (see [DECISIONS/0023](DECISIONS/0023-cvi-trend-history.md)).
+- `GET /status` is a public, **server-rendered** trust status page — the one page to link someone to for "is the verification layer healthy right now?". No JavaScript (complete on first byte, 30-second meta-refresh), it embeds the CVI badge and shows a single posture verdict — `TRUSTWORTHY` (chain intact, sealed head reproduced and signed), `INTACT` (intact but not yet sealed), or `BROKEN at #id` — above tiles for the CVI and its spread, the held queue and SLA, and the latest checkpoint and drift audit. Read-only and aggregate like `/cvi`, distinct from the interactive operator console at `/` (see [DECISIONS/0044](DECISIONS/0044-public-status-page.md)).
 - `GET /badge/cvi.svg` renders the live CVI as an embeddable SVG badge — grey `verification` label, coloured value: green at or above the `0.74` held/attested threshold, stepping down through yellow and orange to red below it, so a badge pinned to a README reads the same truth the terminal does. Self-contained (no shields.io, no fonts), public and aggregate like `/cvi`, `?label=` overrides the left cell, sent `no-cache` so an embed is never stale (see [DECISIONS/0042](DECISIONS/0042-cvi-trust-badge.md)).
 - `GET /metrics` exposes platform state (CVI, held queue, SLA breaches, chain integrity, builds, adapters) in the **Prometheus text exposition format** — scrapeable by any monitoring stack with no custom integration. Aggregate scalars only, public like `/cvi` (see [DECISIONS/0020](DECISIONS/0020-prometheus-metrics.md)).
 - `GET /attestations` filters the record server-side with fully parameterized query params — `status` (attested/held), `min_confidence`/`max_confidence`, `subject` (substring), `since` (ISO), `limit`, plus `actor`. No params returns the whole record. Every filter is a bound parameter, so a SQL payload is matched as a literal, never executed (see [DECISIONS/0021](DECISIONS/0021-attestation-search.md)).

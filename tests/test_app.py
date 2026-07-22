@@ -874,6 +874,22 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("trust", body)
         self.assertIn('aria-label="trust:', body)
 
+    def test_status_page_renders_trust_posture(self):
+        # seed a clean, high-confidence entry so the posture is well-defined
+        app_module.attestation_engine.attest("status-doc", "body", ["plan"], 0.9)
+        resp = self.client.get("/status")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/html", resp.content_type)
+        body = resp.get_data(as_text=True)
+        # a posture verdict is always one of the three
+        self.assertTrue(any(v in body for v in ("TRUSTWORTHY", "INTACT", "BROKEN")))
+        # it embeds the live CVI badge and links back to the console
+        self.assertIn('src="/badge/cvi.svg"', body)
+        self.assertIn('href="/"', body)
+        # the held/SLA and audit signals are present
+        self.assertIn("Held pending", body)
+        self.assertIn("drift audit", body)
+
         txt = self.client.get("/builds/export.txt")
         self.assertEqual(txt.status_code, 200)
         self.assertIn("text/plain", txt.content_type)

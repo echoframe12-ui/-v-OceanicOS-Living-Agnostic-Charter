@@ -25,7 +25,7 @@ from cvi_history import CviHistory
 from drift_audit import DriftAuditLog
 from verify_ledger import verify_bundle
 from artifacts import ArtifactRegistry
-from attestation import AttestationEngine
+from attestation import AttestationEngine, CONFIDENCE_THRESHOLD
 from auth import ANONYMOUS, AuthRegistry
 from claude_adapter import create_claude_adapter
 from dashboard import Dashboard
@@ -755,6 +755,55 @@ def cvi_badge():
     resp = Response(svg, mimetype=badge.CONTENT_TYPE)
     resp.headers["Cache-Control"] = "no-cache, max-age=0"
     return resp
+
+
+@app.route("/status", methods=["GET"])
+def status_page():
+    """A public, server-rendered trust posture page — the platform's status board.
+
+    Read-only and unauthenticated, distinct from the operator console (`/`): no
+    actions, just the live verification posture at a glance — the CVI and its
+    spread, chain integrity and its seal, the held queue and its SLA, the last
+    checkpoint and the last drift audit. Rendered server-side so it works with no
+    JavaScript, and it embeds the CVI badge (`/badge/cvi.svg`). The one page you
+    link someone to answer "is the verification layer healthy right now?".
+    """
+    verify = attestation_engine.verify()
+    released = held_review_log.released_ids()
+    cvi = attestation_engine.cvi(released_ids=released)
+    held = attestation_engine.held()
+    held_pending = [att for att in held if att["id"] not in released]
+    held_breached = sum(
+        1
+        for att in held
+        if sla_status(
+            att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS
+        ).get("sla_breached")
+    )
+    cp = attestation_engine.latest_checkpoint()
+    audit = drift_audit_log.latest()
+    if not verify["intact"]:
+        posture, posture_class = "BROKEN", "bad"
+    elif verify.get("trustworthy"):
+        posture, posture_class = "TRUSTWORTHY", "ok"
+    else:
+        posture, posture_class = "INTACT", "warn"
+    return render_template(
+        "status.html",
+        posture=posture,
+        posture_class=posture_class,
+        verify=verify,
+        cvi=cvi,
+        attestations_total=len(attestation_engine.list()),
+        held_pending=len(held_pending),
+        held_breached=held_breached,
+        builds_total=len(service.list_builds()),
+        users_total=len(auth_registry.list_users()),
+        checkpoint=cp,
+        audit=audit,
+        threshold=CONFIDENCE_THRESHOLD,
+        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
 
 
 @app.route("/metrics", methods=["GET"])
