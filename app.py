@@ -903,6 +903,43 @@ def admin_overview():
     )
 
 
+def _effective_config() -> dict:
+    """The configuration this process is actually running — from live objects.
+
+    Read from the live components, not raw env, so it reports the truth the
+    process is running, not the intent someone set. Contains no secret value:
+    signing is reported as the boolean `signing_enabled` (the key never leaves
+    the engine), and no token is ever assembled here.
+    """
+    return {
+        "require_auth": bool(app.config.get("REQUIRE_AUTH")),
+        "signing_enabled": attestation_engine.can_sign,
+        "checkpoint": attestation_engine.checkpoint_policy,
+        "quota": {
+            "window_seconds": quotas.WINDOW_SECONDS,
+            "tier_limits": dict(quotas.TIER_LIMITS),
+        },
+        "held_sla_seconds": HELD_SLA_SECONDS,
+        "admins": len(auth_registry.admin_users),
+        "model_adapters": [a["name"] for a in model_router.list_adapters()],
+        "db_path": str(service.db_path),
+        "workspace": os.getenv("OCEANICOS_WORKSPACE", "workspace"),
+        "version": "1.0",
+    }
+
+
+@app.route("/config", methods=["GET"])
+@require_admin
+def effective_config():
+    """The effective runtime configuration — what this instance is actually running.
+
+    Stewardship introspection: reports the operational config from the live
+    objects (auth mode, quota window and tiers, held SLA, checkpoint policy,
+    whether signing is enabled) without ever exposing a secret.
+    """
+    return jsonify(_effective_config())
+
+
 @app.route("/me/builds", methods=["GET"])
 @require_auth
 def my_builds():

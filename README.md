@@ -100,6 +100,7 @@ Use the endpoints:
 
 - GET /health
 - GET /readyz
+- GET /config
 - GET /openapi.json
 - POST /plans
 - POST /memory

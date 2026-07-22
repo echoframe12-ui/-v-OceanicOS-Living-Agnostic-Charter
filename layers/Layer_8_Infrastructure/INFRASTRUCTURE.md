@@ -17,6 +17,7 @@ What the platform runs on — and what it degrades to.
 | Boot | `oceanic_os.py` + `boot/init.v1` | `oceanic-os --boot boot/init.v1 --state stateless --exit 0` instantiates the stack from the ratified, hash-attested manifest and reports the live status of each layer |
 | Observability | `metrics.py` + `/metrics` | Platform state (CVI, held queue, SLA breaches, chain integrity, builds, adapters) in the Prometheus text exposition format — scrapeable by any monitoring stack, no custom integration |
 | Liveness & readiness | `/health`, `readiness.py` + `/readyz` | `/health` is liveness (process up); `/readyz` probes the real dependencies (database reachable, workspace writable) and returns 503 when one is down, so an orchestrator gates traffic correctly; see [DECISIONS/0026](../../DECISIONS/0026-readiness-probe.md) |
+| Config introspection | `/config` (admin) | Reports the effective runtime config (auth mode, quota window + tiers, held SLA, checkpoint policy, whether signing is enabled) from the live objects — never a secret value; see [DECISIONS/0027](../../DECISIONS/0027-config-introspection.md) |
 
 ## Principles applied
 

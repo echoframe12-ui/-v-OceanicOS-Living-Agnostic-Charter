@@ -231,6 +231,43 @@ class OceanicOSAppTests(unittest.TestCase):
             self.client.get("/attestations?min_confidence=high").status_code, 400
         )
 
+    def test_config_is_admin_gated_and_never_leaks_the_signing_key(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("config-steward")
+        original_key = engine._signing_key
+        engine._signing_key = "super-secret-signing-key"
+        try:
+            admin = self.client.post(
+                "/auth/register", data=json.dumps({"username": "config-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register", data=json.dumps({"username": "config-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+
+            # stewardship-gated
+            self.assertEqual(
+                self.client.get("/config", headers={"Authorization": f"Bearer {member}"}).status_code,
+                403,
+            )
+
+            resp = self.client.get("/config", headers={"Authorization": f"Bearer {admin}"})
+            self.assertEqual(resp.status_code, 200)
+            cfg = resp.get_json()
+            # reports the effective config
+            self.assertIn("require_auth", cfg)
+            self.assertIn("window_seconds", cfg["quota"])
+            self.assertIn("held_sla_seconds", cfg)
+            self.assertIn("checkpoint", cfg)
+            self.assertTrue(cfg["signing_enabled"])  # a key is set
+            self.assertTrue(cfg["model_adapters"])
+            # the crux: the secret itself is nowhere in the response
+            self.assertNotIn("super-secret-signing-key", json.dumps(cfg))
+        finally:
+            engine._signing_key = original_key
+            app_module.auth_registry.admin_users.discard("config-steward")
+
     def test_readyz_reports_ready(self):
         resp = self.client.get("/readyz")
         self.assertEqual(resp.status_code, 200)
