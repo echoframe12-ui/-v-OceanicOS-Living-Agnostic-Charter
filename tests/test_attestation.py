@@ -378,6 +378,48 @@ class ByContentHashTests(unittest.TestCase):
         self.assertEqual(self.engine.by_content_hash("0" * 64), [])
 
 
+class SubjectHistoryTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.engine = AttestationEngine(self.db_path)
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_timeline_tracks_reverification_and_trend(self):
+        # the same subject re-verified three times, with changing content and confidence
+        self.engine.attest("charter-v", "draft one", [], 0.5)   # held
+        self.engine.attest("charter-v", "draft two", [], 0.8)   # attested
+        self.engine.attest("charter-v", "draft three", [], 0.9)  # attested
+        h = self.engine.subject_history("charter-v")
+        self.assertEqual(h["count"], 3)
+        self.assertTrue(h["reverified"])
+        self.assertTrue(h["ever_held"])
+        self.assertEqual(h["first_confidence"], 0.5)
+        self.assertEqual(h["latest_confidence"], 0.9)
+        self.assertEqual(h["confidence_delta"], 0.4)
+        self.assertEqual(h["latest_status"], "attested")
+        # oldest to newest
+        self.assertEqual([a["confidence"] for a in h["attestations"]], [0.5, 0.8, 0.9])
+
+    def test_single_attestation_is_not_reverified(self):
+        self.engine.attest("solo", "only", [], 0.9)
+        h = self.engine.subject_history("solo")
+        self.assertEqual(h["count"], 1)
+        self.assertFalse(h["reverified"])
+        self.assertEqual(h["confidence_delta"], 0.0)
+
+    def test_unknown_subject_is_zero_count(self):
+        h = self.engine.subject_history("nope")
+        self.assertEqual(h["count"], 0)
+        self.assertEqual(h["attestations"], [])
+        self.assertIsNone(h["latest_status"])
+        self.assertFalse(h["reverified"])
+
+
 class ReceiptTests(unittest.TestCase):
     def setUp(self):
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")

@@ -564,6 +564,43 @@ class AttestationEngine:
         """
         return self._rows("WHERE sha256 = ?", (sha256,))
 
+    def subject_history(self, subject: str) -> dict[str, Any]:
+        """The timeline of attestations for one subject — trust in an artifact over time.
+
+        Where `by_content_hash` groups identical *bytes*, this groups by logical
+        *identity*: every attestation carrying the same `subject`, oldest to
+        newest, so a caller can see whether an artifact was re-verified and how
+        its confidence and held/attested status moved across versions — even as
+        its content (and hash) changed. Read-only over the existing record;
+        returns a zero-count summary for a subject with no attestations.
+        """
+        rows = self._rows("WHERE subject = ?", (subject,))
+        if not rows:
+            return {
+                "subject": subject,
+                "count": 0,
+                "attestations": [],
+                "first_confidence": None,
+                "latest_confidence": None,
+                "confidence_delta": None,
+                "latest_status": None,
+                "ever_held": False,
+                "reverified": False,
+            }
+        first = rows[0]["confidence"]
+        latest = rows[-1]["confidence"]
+        return {
+            "subject": subject,
+            "count": len(rows),
+            "attestations": rows,
+            "first_confidence": first,
+            "latest_confidence": latest,
+            "confidence_delta": round(latest - first, 3),
+            "latest_status": rows[-1]["status"],
+            "ever_held": any(r["status"] == "held" for r in rows),
+            "reverified": len(rows) > 1,
+        }
+
     def cvi(
         self, actor: str | None = None, released_ids: set[int] | None = None
     ) -> dict[str, Any]:

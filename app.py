@@ -577,6 +577,21 @@ def lookup_attestation():
     return jsonify({"sha256": digest, "found": bool(matches), "matches": matches})
 
 
+@app.route("/attestations/history", methods=["GET"])
+def attestation_subject_history():
+    """The timeline of attestations for one subject — trust in an artifact over time.
+
+    `?subject=` (exact match) returns every attestation of that subject oldest to
+    newest, with whether it was re-verified and how its confidence moved — the
+    logical-identity companion to `/attestations/lookup`'s content-hash view.
+    Public and aggregate; 400 without a subject.
+    """
+    subject = request.args.get("subject")
+    if not subject:
+        return jsonify({"error": "provide 'subject'"}), 400
+    return jsonify(attestation_engine.subject_history(subject))
+
+
 _MAX_BATCH = 100
 
 

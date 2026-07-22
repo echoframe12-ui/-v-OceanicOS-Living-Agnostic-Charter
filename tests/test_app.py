@@ -250,6 +250,24 @@ class OceanicOSAppTests(unittest.TestCase):
             400,
         )
 
+    def test_attestation_subject_history_endpoint(self):
+        engine = app_module.attestation_engine
+        engine.attest("history-doc", "v1", [], 0.5)  # held
+        engine.attest("history-doc", "v2", [], 0.9)  # attested
+        resp = self.client.get("/attestations/history?subject=history-doc")
+        self.assertEqual(resp.status_code, 200)
+        h = resp.get_json()
+        self.assertEqual(h["count"], 2)
+        self.assertTrue(h["reverified"])
+        self.assertTrue(h["ever_held"])
+        self.assertEqual(h["confidence_delta"], 0.4)
+        self.assertEqual(h["latest_status"], "attested")
+        # unknown subject -> zero count, 200
+        empty = self.client.get("/attestations/history?subject=nope").get_json()
+        self.assertEqual(empty["count"], 0)
+        # missing subject -> 400
+        self.assertEqual(self.client.get("/attestations/history").status_code, 400)
+
     def test_attestation_batch_lookup(self):
         engine = app_module.attestation_engine
         engine.attest("batch-1", "output one", [], 0.9)
