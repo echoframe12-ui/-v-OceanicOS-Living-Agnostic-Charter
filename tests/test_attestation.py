@@ -293,6 +293,46 @@ class SignedCheckpointTests(unittest.TestCase):
         self.assertEqual(checkpoints[-1]["length"], 2)
 
 
+class ReceiptTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_receipt_reports_position_and_hash(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("first", "a", [], 0.9)
+        second = engine.attest("second", "b", [], 0.9)
+        receipt = engine.receipt(second["id"])
+        self.assertEqual(receipt["chain_position"], 2)
+        self.assertEqual(receipt["chain_length"], 2)
+        self.assertTrue(receipt["chain_intact"])
+        self.assertEqual(receipt["attestation"]["sha256"], second["sha256"])
+
+    def test_unsealed_until_checkpointed_then_sealed(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        a = engine.attest("x", "c", [], 0.9)
+        self.assertFalse(engine.receipt(a["id"])["sealed"])  # no checkpoint yet
+        engine.checkpoint()
+        sealed = engine.receipt(a["id"])
+        self.assertTrue(sealed["sealed"])
+        self.assertEqual(sealed["checkpoint"]["length"], 1)
+
+    def test_attestation_after_the_seal_is_not_sealed(self):
+        engine = AttestationEngine(self.db_path, signing_key="k")
+        engine.attest("sealed-one", "c", [], 0.9)
+        engine.checkpoint()  # seals length 1
+        later = engine.attest("after", "c", [], 0.9)  # position 2, beyond the seal
+        self.assertFalse(engine.receipt(later["id"])["sealed"])
+
+    def test_missing_id_returns_none(self):
+        self.assertIsNone(AttestationEngine(self.db_path).receipt(999))
+
+
 class StatsTests(unittest.TestCase):
     def setUp(self):
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")

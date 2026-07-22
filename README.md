@@ -124,6 +124,7 @@ Use the endpoints:
 - GET /attestations/held
 - POST /attestations/<id>/review
 - GET /attestations/<id>/reviews
+- GET /attestations/<id>/receipt
 - GET /attestations/verify
 - POST /attestations/verify-bundle
 - POST /attestations/checkpoint

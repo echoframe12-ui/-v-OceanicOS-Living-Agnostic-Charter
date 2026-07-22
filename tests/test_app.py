@@ -210,6 +210,19 @@ class OceanicOSAppTests(unittest.TestCase):
         # the rules engine sits on the panel as the deterministic anchor
         self.assertIn("rules-engine", payload["adapters"])
 
+    def test_attestation_receipt_endpoint(self):
+        engine = app_module.attestation_engine
+        att = engine.attest("receipt-subject", "content", ["plan"], 0.9)
+        resp = self.client.get(f"/attestations/{att['id']}/receipt")
+        self.assertEqual(resp.status_code, 200)
+        receipt = resp.get_json()
+        self.assertEqual(receipt["attestation"]["sha256"], att["sha256"])
+        self.assertIn("chain_position", receipt)
+        self.assertIn("sealed", receipt)
+        self.assertTrue(receipt["chain_intact"])
+        # missing id -> 404
+        self.assertEqual(self.client.get("/attestations/999999/receipt").status_code, 404)
+
     def test_attestations_stats_endpoint(self):
         engine = app_module.attestation_engine
         engine.attest("stats-a", "1", [], 0.95, actor="stats-user")

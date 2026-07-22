@@ -456,6 +456,37 @@ class AttestationEngine:
             ),
         }
 
+    def receipt(self, att_id: int) -> dict[str, Any] | None:
+        """A verification receipt for one attestation — the proof a client presents.
+
+        Locates the attestation, its height in the chain, whether the chain is
+        intact, and whether a signed checkpoint seals its position (its height is
+        within a checkpoint's sealed length). This is the per-item answer to
+        "prove this was verified": the content hash, its place in the chain, and
+        whether that place is under a signature. Returns None for a missing id.
+        """
+        rows = self._rows()
+        entry = None
+        position = 0
+        for index, row in enumerate(rows, start=1):
+            if row["id"] == att_id:
+                entry = row
+                position = index
+                break
+        if entry is None:
+            return None
+        cp = self.latest_checkpoint()
+        return {
+            "attestation": entry,
+            "chain_position": position,
+            "chain_length": len(rows),
+            "chain_intact": self.verify_chain()["intact"],
+            "sealed": cp is not None and position <= cp["length"],
+            "checkpoint": (
+                {"length": cp["length"], "created_at": cp["created_at"]} if cp else None
+            ),
+        }
+
     def export(self) -> dict[str, Any]:
         """The whole sealed record as a self-contained, portable bundle.
 

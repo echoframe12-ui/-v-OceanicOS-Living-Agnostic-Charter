@@ -505,6 +505,20 @@ def list_held_reviews(att_id: int):
     return jsonify(held_review_log.list(att_id))
 
 
+@app.route("/attestations/<int:att_id>/receipt", methods=["GET"])
+def attestation_receipt(att_id: int):
+    """A verification receipt for one attestation — hash, chain position, seal.
+
+    The per-item proof: the attestation's content hash, its height in the chain,
+    whether the chain is intact, and whether a signed checkpoint seals its
+    position. 404 for a missing id.
+    """
+    receipt = attestation_engine.receipt(att_id)
+    if receipt is None:
+        return jsonify({"error": f"no attestation #{att_id}"}), 404
+    return jsonify(receipt)
+
+
 @app.route("/attestations/stats", methods=["GET"])
 def attestation_stats():
     """Aggregate shape of the record — totals, confidence histogram, by-actor.
