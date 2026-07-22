@@ -304,8 +304,23 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("chain_position", receipt)
         self.assertIn("sealed", receipt)
         self.assertTrue(receipt["chain_intact"])
+        # the receipt certifies its own entry, not just the whole chain
+        self.assertTrue(receipt["entry_intact"])
         # missing id -> 404
         self.assertEqual(self.client.get("/attestations/999999/receipt").status_code, 404)
+
+    def test_attestation_verify_entry_endpoint(self):
+        engine = app_module.attestation_engine
+        att = engine.attest("verify-entry-subject", "content", ["plan"], 0.9)
+        resp = self.client.get(f"/attestations/{att['id']}/verify")
+        self.assertEqual(resp.status_code, 200)
+        result = resp.get_json()
+        self.assertTrue(result["intact"])
+        self.assertTrue(result["entry_hash_matches"])
+        self.assertTrue(result["prev_hash_matches"])
+        self.assertEqual(result["id"], att["id"])
+        # missing id -> 404
+        self.assertEqual(self.client.get("/attestations/999999/verify").status_code, 404)
 
     def test_attestations_stats_endpoint(self):
         engine = app_module.attestation_engine
@@ -841,6 +856,55 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(pricing.status_code, 200)
         tiers = pricing.get_json()["tiers"]
         self.assertEqual([tier["price"] for tier in tiers], [8500, 25500, 85000])
+
+    def test_cvi_badge_is_svg_matching_the_index(self):
+        current = self.client.get("/cvi").get_json()["cvi"]
+        resp = self.client.get("/badge/cvi.svg")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.mimetype, "image/svg+xml")
+        self.assertIn("no-cache", resp.headers.get("Cache-Control", ""))
+        body = resp.get_data(as_text=True)
+        self.assertTrue(body.startswith("<svg"))
+        self.assertIn("verification", body)
+        # the badge value is the live CVI to two places
+        self.assertIn(f"{current:.2f}", body)
+
+    def test_cvi_badge_label_override(self):
+        body = self.client.get("/badge/cvi.svg?label=trust").get_data(as_text=True)
+        self.assertIn("trust", body)
+        self.assertIn('aria-label="trust:', body)
+
+    def test_status_page_renders_trust_posture(self):
+        # seed a clean, high-confidence entry so the posture is well-defined
+        app_module.attestation_engine.attest("status-doc", "body", ["plan"], 0.9)
+        resp = self.client.get("/status")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/html", resp.content_type)
+        body = resp.get_data(as_text=True)
+        # a posture verdict is always one of the three
+        self.assertTrue(any(v in body for v in ("TRUSTWORTHY", "INTACT", "BROKEN")))
+        # it embeds the live CVI badge and links back to the console
+        self.assertIn('src="/badge/cvi.svg"', body)
+        self.assertIn('href="/"', body)
+        # the held/SLA and audit signals are present
+        self.assertIn("Held pending", body)
+        self.assertIn("drift audit", body)
+
+    def test_status_json_twin_matches_the_page(self):
+        app_module.attestation_engine.attest("status-json-doc", "body", ["plan"], 0.9)
+        resp = self.client.get("/status.json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/json", resp.content_type)
+        data = resp.get_json()
+        # the single posture verdict is one of the three, and machine-readable
+        self.assertIn(data["posture"], ("TRUSTWORTHY", "INTACT", "BROKEN"))
+        # posture_class is presentation-only and must not leak into the JSON
+        self.assertNotIn("posture_class", data)
+        # the underlying signals are all present and agree with /cvi
+        self.assertEqual(data["cvi"]["cvi"], self.client.get("/cvi").get_json()["cvi"])
+        for key in ("verify", "held_pending", "held_breached", "checkpoint",
+                    "audit", "attestations_total", "threshold", "generated_at"):
+            self.assertIn(key, data)
 
         txt = self.client.get("/builds/export.txt")
         self.assertEqual(txt.status_code, 200)

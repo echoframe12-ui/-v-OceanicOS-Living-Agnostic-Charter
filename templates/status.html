@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="30" />
+    <link rel="icon" href="/static/brand/oceanicos-badge.png" />
+    <title>Ω∞v OceanicOS — Trust Status</title>
+    <style>
+      * { border-radius: 0 !important; box-sizing: border-box; }
+      body { font-family: "IBM Plex Mono", "Courier New", monospace; margin: 0; padding: 1.5rem; background: #0a0a0a; color: #e6e6e6; line-height: 1.45; font-size: 14px; }
+      a { color: #e6e6e6; }
+      h1 { font-size: 1.1rem; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 1px solid #e6e6e6; padding-bottom: 0.5rem; }
+      h2 { font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase; color: #999; margin: 1.5rem 0 0.6rem 0; }
+      .mantra { color: #999; font-size: 0.8rem; letter-spacing: 0.05em; }
+      .posture { display: flex; align-items: baseline; gap: 1rem; border: 1px solid #333; background: #000; padding: 1rem; margin: 1rem 0; }
+      .posture .verdict { font-size: 1.6rem; letter-spacing: 0.14em; text-transform: uppercase; }
+      .posture .sub { color: #777; font-size: 0.72rem; }
+      .ok { color: #7fbf7f; } .bad { color: #bf7f7f; } .warn { color: #bfae7f; } .dim { color: #777; }
+      .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+      .tile { background: #000; border: 1px solid #333; padding: 0.75rem; }
+      .tile .k { color: #777; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.12em; }
+      .tile .v { font-size: 1.5rem; margin-top: 0.25rem; }
+      .tile .u { color: #777; font-size: 0.66rem; margin-top: 0.2rem; }
+      table { width: 100%; border-collapse: collapse; font-size: 0.78rem; max-width: 640px; }
+      th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #222; vertical-align: top; }
+      th { color: #999; text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.08em; }
+      .badge-row { margin: 1rem 0; }
+      .footer { color: #555; font-size: 0.7rem; margin-top: 2rem; border-top: 1px solid #222; padding-top: 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Ω∞v OceanicOS — Trust Status</h1>
+    <p class="mantra">Attest, don't assert. This board reports the record's own verification posture — public, read-only, refreshed every 30s. The console lives at <a href="/">/</a>.</p>
+
+    <div class="posture">
+      <span class="verdict {{ posture_class }}">{{ posture }}</span>
+      <span class="sub">
+        chain {{ 'intact' if verify.intact else 'BROKEN at #' ~ verify.broken_at }},
+        {{ verify.length }} link{{ '' if verify.length == 1 else 's' }}{% if verify.checkpointed %}, sealed head {{ 'reproduced & signed' if verify.trustworthy else 'unverified' }}{% else %}, no checkpoint yet{% endif %}
+      </span>
+    </div>
+
+    <div class="badge-row">
+      <img src="/badge/cvi.svg" alt="verification index badge" />
+    </div>
+
+    <div class="tiles">
+      <div class="tile">
+        <div class="k">CVI</div>
+        <div class="v {{ 'ok' if cvi.cvi >= threshold else ('warn' if cvi.cvi >= 0.4 else 'bad') }}">{{ '%.2f'|format(cvi.cvi) }}</div>
+        <div class="u">[{{ '%.2f'|format(cvi.confidence_interval[0]) }}–{{ '%.2f'|format(cvi.confidence_interval[1]) }}]</div>
+      </div>
+      <div class="tile">
+        <div class="k">Attestations</div>
+        <div class="v">{{ attestations_total }}</div>
+        <div class="u">{{ cvi.samples }} in index</div>
+      </div>
+      <div class="tile">
+        <div class="k">Held pending</div>
+        <div class="v {{ 'bad' if held_breached else ('warn' if held_pending else 'dim') }}">{{ held_pending }}</div>
+        <div class="u">{{ held_breached }} past SLA</div>
+      </div>
+      <div class="tile">
+        <div class="k">Builds</div>
+        <div class="v">{{ builds_total }}</div>
+        <div class="u">ledger entries</div>
+      </div>
+      <div class="tile">
+        <div class="k">Accounts</div>
+        <div class="v">{{ users_total }}</div>
+        <div class="u">registered</div>
+      </div>
+    </div>
+
+    <h2>Seal &amp; audit</h2>
+    <table>
+      <tr><th>Signal</th><th>State</th></tr>
+      <tr>
+        <td>Latest checkpoint</td>
+        <td>{% if checkpoint %}length {{ checkpoint.length }} · {{ checkpoint.created_at }}{% else %}<span class="dim">none sealed yet</span>{% endif %}</td>
+      </tr>
+      <tr>
+        <td>Head trustworthy</td>
+        <td class="{{ 'ok' if verify.trustworthy else 'warn' }}">{{ 'yes — reproduced & signature valid' if verify.trustworthy else 'not established' }}</td>
+      </tr>
+      <tr>
+        <td>Latest drift audit</td>
+        <td>{% if audit %}<span class="{{ 'ok' if audit.intact else 'bad' }}">{{ 'intact' if audit.intact else 'BROKEN at #' ~ audit.broken_at }}</span> · length {{ audit.length }} · {{ audit.checked_at }}{% else %}<span class="dim">no audit recorded yet</span>{% endif %}</td>
+      </tr>
+    </table>
+
+    <div class="footer">
+      Generated {{ generated_at }} · threshold {{ threshold }} · machine-readable at
+      <a href="/metrics">/metrics</a>, <a href="/cvi">/cvi</a>, <a href="/attestations/verify">/attestations/verify</a>.
+      Exit 0. Continues…
+    </div>
+  </body>
+</html>

@@ -219,6 +219,39 @@ class AttestationEngineTests(unittest.TestCase):
         self.assertEqual(b["prev_hash"], a["entry_hash"])
         self.assertTrue(worker_a.verify_chain()["intact"])
 
+    def test_verify_entry_confirms_an_untouched_row(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.9)
+        result = engine.verify_entry(2)
+        self.assertTrue(result["intact"])
+        self.assertTrue(result["prev_hash_matches"])
+        self.assertTrue(result["entry_hash_matches"])
+        self.assertEqual(result["chain_position"], 2)
+
+    def test_verify_entry_first_row_links_to_genesis(self):
+        engine = AttestationEngine(self.db_path)
+        first = engine.attest("a", "one", [], 0.9)
+        result = engine.verify_entry(first["id"])
+        self.assertTrue(result["intact"])
+        self.assertEqual(result["expected_prev_hash"], GENESIS_HASH)
+
+    def test_verify_entry_detects_a_tampered_row(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        engine.attest("b", "two", [], 0.5)  # held
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE attestations SET status = 'attested' WHERE id = 2")
+        result = engine.verify_entry(2)
+        self.assertFalse(result["intact"])
+        # the fields changed, so the recomputed hash no longer matches the stored
+        self.assertFalse(result["entry_hash_matches"])
+
+    def test_verify_entry_missing_id_returns_none(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "one", [], 0.9)
+        self.assertIsNone(engine.verify_entry(999))
+
 
 class SignedCheckpointTests(unittest.TestCase):
     def setUp(self):
@@ -363,7 +396,17 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(receipt["chain_position"], 2)
         self.assertEqual(receipt["chain_length"], 2)
         self.assertTrue(receipt["chain_intact"])
+        self.assertTrue(receipt["entry_intact"])
         self.assertEqual(receipt["attestation"]["sha256"], second["sha256"])
+
+    def test_receipt_entry_intact_goes_false_on_tamper(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("first", "a", [], 0.9)
+        second = engine.attest("second", "b", [], 0.5)  # held
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE attestations SET status = 'attested' WHERE id = ?", (second["id"],))
+        receipt = engine.receipt(second["id"])
+        self.assertFalse(receipt["entry_intact"])
 
     def test_unsealed_until_checkpointed_then_sealed(self):
         engine = AttestationEngine(self.db_path, signing_key="k")

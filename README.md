@@ -100,6 +100,8 @@ Use the endpoints:
 
 - GET /health
 - GET /readyz
+- GET /status
+- GET /status.json
 - GET /config
 - GET /openapi.json
 - POST /plans
@@ -127,6 +129,7 @@ Use the endpoints:
 - POST /attestations/<id>/review
 - GET /attestations/<id>/reviews
 - GET /attestations/<id>/receipt
+- GET /attestations/<id>/verify
 - GET /attestations/verify
 - POST /attestations/audit
 - GET /attestations/audits
@@ -135,6 +138,7 @@ Use the endpoints:
 - GET /attestations/export
 - GET /cvi
 - GET /cvi/history
+- GET /badge/cvi.svg
 - GET /metrics
 - POST /nodes
 - GET /nodes
@@ -267,8 +271,12 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - `GET /builds/export` degrades the build ledger gracefully into a spreadsheet (CSV); `GET /builds/export.txt` degrades one step further, into plain text.
 - `GET /cvi` reports the Composite Verification Index — mean attestation confidence discounted by the held ratio; no evidence scores 0.0. It also carries a `confidence_interval` (`mean ± std` of the sample, clamped to `[0,1]`), so the trust index states its own spread — wide when the record disagrees, a point for a single sample (see [DECISIONS/0040](DECISIONS/0040-cvi-confidence-interval.md)).
 - `GET /cvi/history` returns the CVI as a time series — the trend behind the headline number, recorded change-only at the points it can move (a build, a held-review decision), scoped by `?actor=` and capped by `?limit=`. The console draws a sparkline from it (see [DECISIONS/0023](DECISIONS/0023-cvi-trend-history.md)).
+- `GET /status` is a public, **server-rendered** trust status page — the one page to link someone to for "is the verification layer healthy right now?". No JavaScript (complete on first byte, 30-second meta-refresh), it embeds the CVI badge and shows a single posture verdict — `TRUSTWORTHY` (chain intact, sealed head reproduced and signed), `INTACT` (intact but not yet sealed), or `BROKEN at #id` — above tiles for the CVI and its spread, the held queue and SLA, and the latest checkpoint and drift audit. Read-only and aggregate like `/cvi`, distinct from the interactive operator console at `/` (see [DECISIONS/0044](DECISIONS/0044-public-status-page.md)).
+- `GET /status.json` is the machine-readable twin of `/status` — the whole posture in one call: the single `posture` verdict (`TRUSTWORTHY`/`INTACT`/`BROKEN`) plus every underlying signal (`verify`, `cvi`, held queue and SLA, latest checkpoint and drift audit), assembled from the same `_status_snapshot` the page renders so the two can never disagree. For a monitor or CI gate that would otherwise stitch the rollup together from `/cvi`, `/attestations/verify`, and `/attestations/audits` (see [DECISIONS/0045](DECISIONS/0045-status-json-twin.md)).
+- `GET /badge/cvi.svg` renders the live CVI as an embeddable SVG badge — grey `verification` label, coloured value: green at or above the `0.74` held/attested threshold, stepping down through yellow and orange to red below it, so a badge pinned to a README reads the same truth the terminal does. Self-contained (no shields.io, no fonts), public and aggregate like `/cvi`, `?label=` overrides the left cell, sent `no-cache` so an embed is never stale (see [DECISIONS/0042](DECISIONS/0042-cvi-trust-badge.md)).
 - `GET /metrics` exposes platform state (CVI, held queue, SLA breaches, chain integrity, builds, adapters) in the **Prometheus text exposition format** — scrapeable by any monitoring stack with no custom integration. Aggregate scalars only, public like `/cvi` (see [DECISIONS/0020](DECISIONS/0020-prometheus-metrics.md)).
 - `GET /attestations` filters the record server-side with fully parameterized query params — `status` (attested/held), `min_confidence`/`max_confidence`, `subject` (substring), `since` (ISO), `limit`, plus `actor`. No params returns the whole record. Every filter is a bound parameter, so a SQL payload is matched as a literal, never executed (see [DECISIONS/0021](DECISIONS/0021-attestation-search.md)).
+- `GET /attestations/<id>/verify` verifies a single attestation in place: it recomputes that entry's link hash from its recorded fields and its predecessor, reporting `entry_hash_matches` (the entry's own fields are untampered) and `prev_hash_matches` (it is linked at the right place) separately, so a tamper is localised to content vs. position. Where the whole-chain verify answers "is the ledger intact", this answers "is *this* entry intact" — the per-item proof, and the receipt now carries the same `entry_intact` so a receipt certifies its own entry, not just the chain around it (see [DECISIONS/0043](DECISIONS/0043-per-attestation-integrity-verification.md)).
 - `GET /attestations/verify` walks the attestation hash chain and reports whether the ledger is intact — the record attests to itself. Each attestation carries the previous entry's hash and its own, so any retroactive edit breaks the chain and the walk returns the id of the first broken link (see [DECISIONS/0011](DECISIONS/0011-tamper-evident-ledger.md)). It also validates the latest signed checkpoint: `trustworthy` is true only when the chain is intact, the sealed head is still reproduced, and its signature validates under the current key.
 - `POST /attestations/checkpoint` (admin) seals the current chain head with an HMAC signature keyed by `OCEANICOS_SIGNING_KEY` — a secret that never touches the database. This raises the bar from tamper-*evident* to tamper-*resistant*: an attacker who rewrites the ledger and recomputes the chain forward still can't forge a checkpoint matching their new head without the key, so `verify` reports `trustworthy: false` (see [DECISIONS/0012](DECISIONS/0012-signed-checkpoints.md)). Returns 503 if no key is configured, 409 if the chain is already broken. Set `OCEANICOS_CHECKPOINT_EVERY=N` to seal the head automatically every N attestations so the signed guarantee operates without a human in the loop (default 0 = manual-only; `/admin/overview` reports the active `checkpoint_policy`; see [DECISIONS/0014](DECISIONS/0014-automatic-checkpoint-cadence.md)).
 - `POST /attestations/verify-bundle` verifies a bundle the caller holds — the online twin of `verify_ledger.py`, running the same pure `verify_bundle` so the two can't diverge. Chain integrity always; the signature validates only for bundles this server sealed (no key is accepted over the wire). See [DECISIONS/0029](DECISIONS/0029-online-bundle-verification.md).

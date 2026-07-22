@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
+from typing import Any
 
 from flask import Flask, Response, g, jsonify, render_template, request
 
@@ -15,6 +16,7 @@ import requestlog
 
 import adr
 import anchor
+import badge
 import identity
 import metrics
 import openapi
@@ -24,7 +26,7 @@ from cvi_history import CviHistory
 from drift_audit import DriftAuditLog
 from verify_ledger import verify_bundle
 from artifacts import ArtifactRegistry
-from attestation import AttestationEngine
+from attestation import AttestationEngine, CONFIDENCE_THRESHOLD
 from auth import ANONYMOUS, AuthRegistry
 from claude_adapter import create_claude_adapter
 from dashboard import Dashboard
@@ -521,6 +523,21 @@ def attestation_receipt(att_id: int):
     return jsonify(receipt)
 
 
+@app.route("/attestations/<int:att_id>/verify", methods=["GET"])
+def verify_attestation_entry(att_id: int):
+    """Verify one attestation's integrity in place — the per-item chain check.
+
+    Recomputes this entry's link hash from its recorded fields and its
+    predecessor, reporting whether it is untampered and correctly linked at its
+    position. Where `/attestations/verify` checks the whole chain, this checks a
+    single entry. Public, like the receipt it backs. 404 for a missing id.
+    """
+    result = attestation_engine.verify_entry(att_id)
+    if result is None:
+        return jsonify({"error": f"no attestation #{att_id}"}), 404
+    return jsonify(result)
+
+
 @app.route("/attestations/audit", methods=["POST"])
 @require_admin
 def run_drift_audit():
@@ -721,6 +738,95 @@ def cvi_trend():
     if "limit" in request.args and limit is None:
         return jsonify({"error": "limit must be an integer"}), 400
     return jsonify(cvi_history.list(actor=actor, limit=limit))
+
+
+@app.route("/badge/cvi.svg", methods=["GET"])
+def cvi_badge():
+    """The live CVI as an embeddable SVG badge — the trust index for a README.
+
+    Grey `verification` label, coloured value: green at or above the 0.74
+    threshold, stepping down to red below it, so a badge pinned to the repo
+    reads the same truth the terminal does. Public and aggregate like `/cvi`;
+    `?label=` overrides the left cell. Sent no-cache so an embed shows the
+    current index, not a stale one.
+    """
+    value = attestation_engine.cvi(released_ids=held_review_log.released_ids())["cvi"]
+    label = request.args.get("label", "verification")
+    svg = badge.render(label, f"{value:.2f}", badge.cvi_color(value))
+    resp = Response(svg, mimetype=badge.CONTENT_TYPE)
+    resp.headers["Cache-Control"] = "no-cache, max-age=0"
+    return resp
+
+
+def _status_snapshot() -> dict[str, Any]:
+    """Assemble the live trust posture once, for both `/status` and `/status.json`.
+
+    A single source so the human page and the machine twin can never disagree.
+    Reduces the record to a single `posture` verdict — `TRUSTWORTHY` (chain
+    intact, sealed head reproduced and signed), `INTACT` (intact but not yet
+    sealed), or `BROKEN` (with the broken-at id) — plus the underlying signals.
+    """
+    verify = attestation_engine.verify()
+    released = held_review_log.released_ids()
+    cvi = attestation_engine.cvi(released_ids=released)
+    held = attestation_engine.held()
+    held_pending = [att for att in held if att["id"] not in released]
+    held_breached = sum(
+        1
+        for att in held
+        if sla_status(
+            att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS
+        ).get("sla_breached")
+    )
+    if not verify["intact"]:
+        posture, posture_class = "BROKEN", "bad"
+    elif verify.get("trustworthy"):
+        posture, posture_class = "TRUSTWORTHY", "ok"
+    else:
+        posture, posture_class = "INTACT", "warn"
+    return {
+        "posture": posture,
+        "posture_class": posture_class,
+        "verify": verify,
+        "cvi": cvi,
+        "attestations_total": len(attestation_engine.list()),
+        "held_pending": len(held_pending),
+        "held_breached": held_breached,
+        "builds_total": len(service.list_builds()),
+        "users_total": len(auth_registry.list_users()),
+        "checkpoint": attestation_engine.latest_checkpoint(),
+        "audit": drift_audit_log.latest(),
+        "threshold": CONFIDENCE_THRESHOLD,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+@app.route("/status", methods=["GET"])
+def status_page():
+    """A public, server-rendered trust posture page — the platform's status board.
+
+    Read-only and unauthenticated, distinct from the operator console (`/`): no
+    actions, just the live verification posture at a glance — the CVI and its
+    spread, chain integrity and its seal, the held queue and its SLA, the last
+    checkpoint and the last drift audit. Rendered server-side so it works with no
+    JavaScript, and it embeds the CVI badge (`/badge/cvi.svg`). The one page you
+    link someone to answer "is the verification layer healthy right now?".
+    """
+    return render_template("status.html", **_status_snapshot())
+
+
+@app.route("/status.json", methods=["GET"])
+def status_json():
+    """The machine-readable twin of `/status` — the whole posture in one call.
+
+    The same `_status_snapshot` the page renders, as JSON, so a monitor or
+    dashboard gets the single `posture` verdict and every underlying signal
+    without scraping HTML or reassembling it from `/cvi`, `/attestations/verify`,
+    and the audit trail separately. `posture_class` (a CSS concern) is dropped.
+    """
+    snapshot = _status_snapshot()
+    snapshot.pop("posture_class", None)
+    return jsonify(snapshot)
 
 
 @app.route("/metrics", methods=["GET"])
