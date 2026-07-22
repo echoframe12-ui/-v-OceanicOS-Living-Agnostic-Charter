@@ -293,6 +293,33 @@ class SignedCheckpointTests(unittest.TestCase):
         self.assertEqual(checkpoints[-1]["length"], 2)
 
 
+class ByContentHashTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.engine = AttestationEngine(self.db_path)
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_finds_attestations_of_a_content_hash(self):
+        entry = self.engine.attest("subj", "the exact output", [], 0.9)
+        matches = self.engine.by_content_hash(entry["sha256"])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["id"], entry["id"])
+
+    def test_returns_all_matches_for_repeated_content(self):
+        self.engine.attest("a", "same content", [], 0.9)
+        self.engine.attest("b", "same content", [], 0.6)
+        digest = self.engine.attest("c", "same content", [], 0.8)["sha256"]
+        self.assertEqual(len(self.engine.by_content_hash(digest)), 3)
+
+    def test_unknown_hash_returns_empty(self):
+        self.assertEqual(self.engine.by_content_hash("0" * 64), [])
+
+
 class ReceiptTests(unittest.TestCase):
     def setUp(self):
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")

@@ -519,6 +519,25 @@ def attestation_receipt(att_id: int):
     return jsonify(receipt)
 
 
+@app.route("/attestations/lookup", methods=["POST"])
+def lookup_attestation():
+    """Content-addressable lookup — was this exact output attested?
+
+    Give `content` (hashed server-side) or a `sha256` directly; returns every
+    attestation of that hash with its confidence and status. The way back in
+    from an artifact to its attestation.
+    """
+    payload = request.get_json(silent=True) or {}
+    if "content" in payload:
+        digest = hashlib.sha256(str(payload["content"]).encode()).hexdigest()
+    elif "sha256" in payload:
+        digest = str(payload["sha256"])
+    else:
+        return jsonify({"error": "provide 'content' or 'sha256'"}), 400
+    matches = attestation_engine.by_content_hash(digest)
+    return jsonify({"sha256": digest, "found": bool(matches), "matches": matches})
+
+
 @app.route("/attestations/stats", methods=["GET"])
 def attestation_stats():
     """Aggregate shape of the record — totals, confidence histogram, by-actor.

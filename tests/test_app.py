@@ -210,6 +210,46 @@ class OceanicOSAppTests(unittest.TestCase):
         # the rules engine sits on the panel as the deterministic anchor
         self.assertIn("rules-engine", payload["adapters"])
 
+    def test_attestation_lookup_by_content_and_hash(self):
+        engine = app_module.attestation_engine
+        att = engine.attest("lookup-subj", "a very specific output", [], 0.9)
+
+        # by content: the server hashes it and finds the match
+        by_content = self.client.post(
+            "/attestations/lookup",
+            data=json.dumps({"content": "a very specific output"}),
+            content_type="application/json",
+        ).get_json()
+        self.assertTrue(by_content["found"])
+        self.assertEqual(by_content["sha256"], att["sha256"])
+        self.assertIn(att["id"], [m["id"] for m in by_content["matches"]])
+
+        # by sha256 directly
+        by_hash = self.client.post(
+            "/attestations/lookup",
+            data=json.dumps({"sha256": att["sha256"]}),
+            content_type="application/json",
+        ).get_json()
+        self.assertTrue(by_hash["found"])
+
+        # unknown content -> found false
+        miss = self.client.post(
+            "/attestations/lookup",
+            data=json.dumps({"content": "never attested"}),
+            content_type="application/json",
+        ).get_json()
+        self.assertFalse(miss["found"])
+        self.assertEqual(miss["matches"], [])
+
+        # missing body -> 400
+        self.assertEqual(
+            self.client.post(
+                "/attestations/lookup", data=json.dumps({}),
+                content_type="application/json",
+            ).status_code,
+            400,
+        )
+
     def test_attestation_receipt_endpoint(self):
         engine = app_module.attestation_engine
         att = engine.attest("receipt-subject", "content", ["plan"], 0.9)

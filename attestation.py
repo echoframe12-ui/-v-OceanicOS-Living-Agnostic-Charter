@@ -512,6 +512,18 @@ class AttestationEngine:
     def held(self) -> list[dict[str, Any]]:
         return self._rows("WHERE status = ?", ("held",))
 
+    def by_content_hash(self, sha256: str) -> list[dict[str, Any]]:
+        """Attestations of a given content hash — content-addressable lookup.
+
+        The ledger hashes every content on the way in; this finds it on the way
+        back. A caller holding an output can recompute its sha256 and ask the
+        record whether that exact content was attested, and with what confidence
+        — closing the loop from attestation to later verification of the artifact
+        itself. Returns every match (the same content may be attested more than
+        once), newest last.
+        """
+        return self._rows("WHERE sha256 = ?", (sha256,))
+
     def cvi(
         self, actor: str | None = None, released_ids: set[int] | None = None
     ) -> dict[str, Any]:

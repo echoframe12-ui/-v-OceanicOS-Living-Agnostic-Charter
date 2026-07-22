@@ -121,6 +121,7 @@ Use the endpoints:
 - GET /builds/export.txt
 - GET /attestations
 - GET /attestations/stats
+- POST /attestations/lookup
 - GET /attestations/held
 - POST /attestations/<id>/review
 - GET /attestations/<id>/reviews
