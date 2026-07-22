@@ -157,6 +157,28 @@
         </div>
 
         <div class="panel">
+          <h2>Ledger // Stats</h2>
+          <div id="stats">loading…</div>
+        </div>
+
+        <div class="panel">
+          <h2>Receipt // Proof</h2>
+          <form id="receipt-form">
+            <div class="row">
+              <input id="receipt-id" placeholder="attestation id" value="1" />
+              <button type="submit" style="flex:0 0 auto">Get Receipt</button>
+            </div>
+          </form>
+          <div id="receipt-output" class="hint" style="margin-top:0.5rem">the per-item proof: hash, chain position, seal.</div>
+        </div>
+
+        <div class="panel">
+          <h2>Governance // ADR</h2>
+          <div id="adr-list" class="hint">loading decision records…</div>
+          <pre id="adr-view" style="display:none"></pre>
+        </div>
+
+        <div class="panel">
           <h2>Metrics // Prometheus</h2>
           <pre id="metrics">scraping /metrics…</pre>
         </div>
@@ -386,12 +408,60 @@
         $('pricing').innerHTML = `<table><thead><tr><th>tier</th><th>$/mo</th><th>includes</th></tr></thead><tbody>${rows}</tbody></table>`;
       }
 
-      function refreshDashboard() { loadTiles(); loadIntegrity(); }
+      // ---- ledger stats: totals + a confidence histogram (round 38) ----
+      async function loadStats() {
+        const { data: s } = await fetchJson('/attestations/stats');
+        if (!s.total) { $('stats').innerHTML = '<span class="hint">no attestations yet.</span>'; return; }
+        const max = Math.max(1, ...Object.values(s.confidence_buckets));
+        const bars = Object.entries(s.confidence_buckets).map(([label, n]) => {
+          const width = Math.round((n / max) * 100);
+          const hot = label.startsWith('0.75');
+          return `<tr><td class="dim">${label}</td><td style="width:100%"><span style="display:inline-block;height:0.8em;width:${width}%;min-width:${n ? 2 : 0}px;background:${hot ? '#7fbf7f' : '#bf7f7f'}"></span> ${n}</td></tr>`;
+        }).join('');
+        const actors = Object.entries(s.by_actor).map(([a, n]) => `${esc(a)}:${n}`).join(' · ');
+        $('stats').innerHTML = `
+          <table>
+            <tr><th>total</th><td>${s.total} <span class="dim">(${s.attested} attested, ${s.held} held · ratio ${s.held_ratio})</span></td></tr>
+            <tr><th>confidence</th><td class="dim">mean ${s.mean_confidence} · min ${s.min_confidence} · max ${s.max_confidence}</td></tr>
+          </table>
+          <table style="margin-top:0.5rem">${bars}</table>
+          <div class="hint" style="margin-top:0.4rem">by actor: ${actors || '—'}</div>`;
+      }
+
+      // ---- per-attestation receipt (round 39) ----
+      $('receipt-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = $('receipt-id').value;
+        const { ok, data } = await fetchJson('/attestations/' + encodeURIComponent(id) + '/receipt');
+        if (!ok) { $('receipt-output').innerHTML = `<span class="bad">no attestation #${esc(id)}</span>`; return; }
+        const a = data.attestation;
+        $('receipt-output').innerHTML = `
+          <span class="ok">${esc(a.subject)}</span> · <span class="${a.status === 'held' ? 'bad' : 'ok'}">${a.status}</span> · conf ${a.confidence}<br>
+          <span class="dim">sha ${esc(a.sha256)}</span><br>
+          chain ${data.chain_position}/${data.chain_length} · integrity ${data.chain_intact ? '<span class="ok">ok</span>' : '<span class="bad">BROKEN</span>'}
+          · <span class="${data.sealed ? 'ok' : 'dim'}">${data.sealed ? 'SEALED' : 'unsealed'}</span>`;
+      });
+
+      // ---- ADR browser (round 37) ----
+      async function loadAdr() {
+        const { data } = await fetchJson('/adr');
+        $('adr-list').innerHTML = (data || []).map((r) =>
+          `<div><a href="#" data-n="${r.number}">${String(r.number).padStart(4, '0')} — ${esc(r.title)}</a></div>`).join('');
+        $('adr-list').querySelectorAll('a[data-n]').forEach((el) => el.addEventListener('click', async (ev) => {
+          ev.preventDefault();
+          const { data: rec } = await fetchJson('/adr/' + el.dataset.n);
+          const view = $('adr-view');
+          view.style.display = 'block';
+          view.textContent = rec.content || '';
+        }));
+      }
+
+      function refreshDashboard() { loadTiles(); loadIntegrity(); loadStats(); }
 
       const splash = $('boot-splash');
       if (splash) splash.addEventListener('animationend', () => splash.remove());
 
-      loadObserver(); loadTiles(); loadIntegrity(); loadPricing();
+      loadObserver(); loadTiles(); loadIntegrity(); loadPricing(); loadStats(); loadAdr();
     </script>
   </body>
 </html>
