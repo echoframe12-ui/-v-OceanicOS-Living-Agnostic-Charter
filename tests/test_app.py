@@ -250,6 +250,50 @@ class OceanicOSAppTests(unittest.TestCase):
             400,
         )
 
+    def test_attestation_batch_lookup(self):
+        engine = app_module.attestation_engine
+        engine.attest("batch-1", "output one", [], 0.9)
+        engine.attest("batch-2", "output two", [], 0.9)
+
+        resp = self.client.post(
+            "/attestations/lookup/batch",
+            data=json.dumps({"contents": ["output one", "never attested", "output two"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["count"], 3)
+        self.assertTrue(body["results"][0]["found"])   # order preserved
+        self.assertFalse(body["results"][1]["found"])
+        self.assertTrue(body["results"][2]["found"])
+
+        # by sha256s too
+        sha = body["results"][0]["sha256"]
+        by_hash = self.client.post(
+            "/attestations/lookup/batch",
+            data=json.dumps({"sha256s": [sha]}),
+            content_type="application/json",
+        ).get_json()
+        self.assertTrue(by_hash["results"][0]["found"])
+
+        # over the cap -> 400
+        self.assertEqual(
+            self.client.post(
+                "/attestations/lookup/batch",
+                data=json.dumps({"contents": ["x"] * 101}),
+                content_type="application/json",
+            ).status_code,
+            400,
+        )
+        # neither list -> 400
+        self.assertEqual(
+            self.client.post(
+                "/attestations/lookup/batch", data=json.dumps({}),
+                content_type="application/json",
+            ).status_code,
+            400,
+        )
+
     def test_attestation_receipt_endpoint(self):
         engine = app_module.attestation_engine
         att = engine.attest("receipt-subject", "content", ["plan"], 0.9)

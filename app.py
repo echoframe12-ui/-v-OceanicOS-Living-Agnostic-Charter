@@ -538,6 +538,35 @@ def lookup_attestation():
     return jsonify({"sha256": digest, "found": bool(matches), "matches": matches})
 
 
+_MAX_BATCH = 100
+
+
+@app.route("/attestations/lookup/batch", methods=["POST"])
+def lookup_attestations_batch():
+    """Content-addressable lookup for many outputs at once.
+
+    `contents` (each hashed server-side) and/or `sha256s` (used directly) as
+    lists; returns one result per item in order. Capped at 100 items per call.
+    """
+    payload = request.get_json(silent=True) or {}
+    contents = payload.get("contents")
+    hashes = payload.get("sha256s")
+    if not isinstance(contents, list) and not isinstance(hashes, list):
+        return jsonify({"error": "provide 'contents' or 'sha256s' as a list"}), 400
+    digests: list[str] = []
+    if isinstance(contents, list):
+        digests += [hashlib.sha256(str(c).encode()).hexdigest() for c in contents]
+    if isinstance(hashes, list):
+        digests += [str(h) for h in hashes]
+    if len(digests) > _MAX_BATCH:
+        return jsonify({"error": f"at most {_MAX_BATCH} items per batch"}), 400
+    results = []
+    for digest in digests:
+        matches = attestation_engine.by_content_hash(digest)
+        results.append({"sha256": digest, "found": bool(matches), "matches": matches})
+    return jsonify({"count": len(results), "results": results})
+
+
 @app.route("/attestations/stats", methods=["GET"])
 def attestation_stats():
     """Aggregate shape of the record — totals, confidence histogram, by-actor.

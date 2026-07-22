@@ -122,6 +122,7 @@ Use the endpoints:
 - GET /attestations
 - GET /attestations/stats
 - POST /attestations/lookup
+- POST /attestations/lookup/batch
 - GET /attestations/held
 - POST /attestations/<id>/review
 - GET /attestations/<id>/reviews
