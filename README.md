@@ -281,6 +281,7 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - The stack boots from a ratified, hash-attested manifest: `python oceanic_os.py --boot boot/init.v1 --state stateless --exit 0` (or `make boot`) instantiates the live components each manifest layer maps to and reports their real status — the threshold in force, the dissent panel's size, the checkpoint policy, the manifest hash, `anchor: present`. It always exits 0; the system continues.
 - The system states one name of itself, root to charter (`/` → Ω∞v Compiler → OceanicOS → Living Agnostic Charter). The boot banner and `/observer` both speak it from the single source in [`identity.py`](identity.py); see [TREE.md](TREE.md) and [DECISIONS/0016](DECISIONS/0016-canonical-identity.md).
 - The platform is offered commercially as Verification-as-a-Service — see [docs/VAAS.md](docs/VAAS.md) and `GET /pricing`.
+- Where OceanicOS sits in the AI-engineering landscape — the verification layer a self-evolving agent needs — is argued in [docs/POSITIONING.md](docs/POSITIONING.md).
 
 ## Identity and Multi-User Attribution
 
