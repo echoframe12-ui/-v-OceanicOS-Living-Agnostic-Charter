@@ -101,6 +101,7 @@
             <button type="submit" id="consensus-button">Convene Panel</button>
           </form>
           <div id="consensus-output" style="margin-top:0.75rem">awaiting query…</div>
+          <div id="dissent-trend" class="hint" style="margin-top:0.5rem">dissent is data — the ledger loads with the panel.</div>
         </div>
 
         <div class="panel">
@@ -335,15 +336,22 @@
         const out = $('consensus-output');
         const data = await withFriction($('consensus-button'), out,
           () => fetchJson('/models/consensus', { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ prompt: $('prompt').value }) }).then((r) => r.data));
+        const score = (data.dissent_score != null) ? ` <span class="dim">(split ${data.dissent_score})</span>` : '';
         const head = data.dissent
-          ? '<span class="bad">DISSENT — panel disagrees; disagreement is the output</span>'
-          : `<span class="ok">CONSENSUS across ${(data.adapters || []).length} members</span>`;
+          ? `<span class="bad">DISSENT — panel disagrees; disagreement is the output</span>${score}`
+          : `<span class="ok">CONSENSUS across ${(data.adapters || []).length} members</span>${score}`;
         const rows = (data.results || []).map((r) => {
           const reasons = (r.reasons && r.reasons.length) ? ` <span class="dim">(${r.reasons.map(esc).join('; ')})</span>` : '';
           return `<tr><td>${esc(r.adapter)}</td><td class="${r.verdict === 'approve' ? 'ok' : 'bad'}">${esc(r.verdict)}</td><td>${esc(r.provider)}${reasons}</td></tr>`;
         }).join('');
         out.innerHTML = `${head}<table style="margin-top:0.5rem"><thead><tr><th>member</th><th>verdict</th><th>provider / reasons</th></tr></thead><tbody>${rows}</tbody></table>`;
+        loadDissentTrend();
       });
+      async function loadDissentTrend() {
+        const { ok, data } = await fetchJson('/consensus/stats');
+        if (!ok || !data.evaluations) { $('dissent-trend').innerHTML = '<span class="hint">dissent ledger empty — convene a panel.</span>'; return; }
+        $('dissent-trend').innerHTML = `<span class="dim">dissent ledger: ${data.evaluations} eval${data.evaluations === 1 ? '' : 's'} · rate <span class="${data.dissent_rate >= 0.5 ? 'bad' : 'dim'}">${Math.round(data.dissent_rate * 100)}%</span> · mean split ${data.mean_dissent_score}</span>`;
+      }
 
       // ---- rules ----
       $('rules-form').addEventListener('submit', async (e) => {
@@ -526,7 +534,7 @@
       const splash = $('boot-splash');
       if (splash) splash.addEventListener('animationend', () => splash.remove());
 
-      loadObserver(); loadTiles(); loadIntegrity(); loadPricing(); loadStats(); loadAdr(); loadAudits();
+      loadObserver(); loadTiles(); loadIntegrity(); loadPricing(); loadStats(); loadAdr(); loadAudits(); loadDissentTrend();
     </script>
   </body>
 </html>

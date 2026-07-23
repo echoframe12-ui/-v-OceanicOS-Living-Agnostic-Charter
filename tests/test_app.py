@@ -1421,6 +1421,13 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("/attestations/attention", body)
         self.assertIn("work these first", body)
 
+    def test_console_surfaces_dissent_trend(self):
+        body = self.client.get("/").get_data(as_text=True)
+        # the round-65 dissent ledger drives a trend readout in the Consensus panel
+        self.assertIn('id="dissent-trend"', body)
+        self.assertIn("/consensus/stats", body)
+        self.assertIn("dissent ledger", body)
+
     def test_node_mounts(self):
         mounted = self.client.post(
             "/nodes",
