@@ -18,6 +18,7 @@ import adr
 import anchor
 import badge
 import doctrine
+import evolution
 import identity
 import status_digest
 import metrics
@@ -1128,6 +1129,29 @@ def record_decision():
 @app.route("/decisions", methods=["GET"])
 def list_decisions():
     return jsonify(decision_registry.list())
+
+
+@app.route("/evolution", methods=["GET"])
+def serve_evolution():
+    """The platform's compounding footprint — what its append-only ledgers accrued.
+
+    The Doctrine's loop ends *Recompile → Compound*. This reports the accrual as
+    one count per ledger — attestations, checkpoints, builds, drift audits, the
+    CVI trend, held-review decisions, dissent evaluations, and the decision log of
+    the platform's own evolution — plus the running total. Public and aggregate,
+    like `/metrics`: counts only, no per-record content.
+    """
+    ledgers = {
+        "attestations": len(attestation_engine.list()),
+        "checkpoints": len(attestation_engine.list_checkpoints()),
+        "builds": len(service.list_builds()),
+        "drift_audits": len(drift_audit_log.list()),
+        "cvi_history": len(cvi_history.list()),
+        "held_reviews": len(held_review_log.list()),
+        "consensus_evaluations": consensus_log.stats()["evaluations"],
+        "decisions": len(adr.list_adr()),
+    }
+    return jsonify(evolution.compounding(ledgers))
 
 
 @app.route("/doctrine", methods=["GET"])

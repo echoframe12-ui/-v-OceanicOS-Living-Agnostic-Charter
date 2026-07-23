@@ -1018,6 +1018,20 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("text/plain", txt.content_type)
         self.assertIn("GROUND TRUTH", txt.get_data(as_text=True))
 
+    def test_evolution_reports_compounding_footprint(self):
+        app_module.attestation_engine.attest("evolution-doc", "body", ["plan"], 0.9)
+        data = self.client.get("/evolution").get_json()
+        self.assertTrue(data["append_only"])
+        self.assertEqual(data["invariant"], "Continuous Becoming")
+        # per-ledger counts present, attestations reflect the record
+        self.assertIn("attestations", data["ledgers"])
+        self.assertGreaterEqual(data["ledgers"]["attestations"]["count"], 1)
+        self.assertGreaterEqual(data["ledgers"]["decisions"]["count"], 1)
+        # the running total sums the ledgers
+        self.assertEqual(
+            data["records_total"], sum(l["count"] for l in data["ledgers"].values())
+        )
+
     def test_status_digest_is_signed_and_verifiable(self):
         import status_digest
         app_module.attestation_engine.attest("digest-doc", "body", ["plan"], 0.9)
@@ -1427,6 +1441,13 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn('id="dissent-trend"', body)
         self.assertIn("/consensus/stats", body)
         self.assertIn("dissent ledger", body)
+
+    def test_console_has_evolution_panel(self):
+        body = self.client.get("/").get_data(as_text=True)
+        # the round-67 compounding footprint has a console panel
+        self.assertIn("Evolution // Compounding", body)
+        self.assertIn('id="evolution"', body)
+        self.assertIn("/evolution", body)
 
     def test_node_mounts(self):
         mounted = self.client.post(

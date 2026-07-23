@@ -188,6 +188,11 @@
         </div>
 
         <div class="panel">
+          <h2>Evolution // Compounding</h2>
+          <div id="evolution" class="hint">loading the compounding footprint…</div>
+        </div>
+
+        <div class="panel">
           <h2>Governance // ADR</h2>
           <div id="adr-list" class="hint">loading decision records…</div>
           <pre id="adr-view" style="display:none"></pre>
@@ -529,12 +534,24 @@
         }));
       }
 
+      async function loadEvolution() {
+        const { ok, data } = await fetchJson('/evolution');
+        if (!ok) { $('evolution').innerHTML = ''; return; }
+        const order = ['attestations', 'checkpoints', 'builds', 'drift_audits', 'cvi_history', 'held_reviews', 'consensus_evaluations', 'decisions'];
+        const rows = order.filter((k) => data.ledgers[k]).map((k) => {
+          const v = data.ledgers[k];
+          return `<tr><td class="dim">${k.replace(/_/g, ' ')}</td><td>${v.count}</td><td class="hint">${esc(v.accrues)}</td></tr>`;
+        }).join('');
+        $('evolution').innerHTML = `
+          <div><span class="ok">${data.records_total}</span> records across ${data.ledger_count} <span class="dim">append-only</span> ledgers · <span class="dim">the histories compound</span></div>
+          <table style="margin-top:0.4rem"><tbody>${rows}</tbody></table>`;
+      }
       function refreshDashboard() { loadTiles(); loadIntegrity(); loadStats(); }
 
       const splash = $('boot-splash');
       if (splash) splash.addEventListener('animationend', () => splash.remove());
 
-      loadObserver(); loadTiles(); loadIntegrity(); loadPricing(); loadStats(); loadAdr(); loadAudits(); loadDissentTrend();
+      loadObserver(); loadTiles(); loadIntegrity(); loadPricing(); loadStats(); loadAdr(); loadAudits(); loadDissentTrend(); loadEvolution();
     </script>
   </body>
 </html>
