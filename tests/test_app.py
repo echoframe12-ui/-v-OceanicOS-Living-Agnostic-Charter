@@ -250,6 +250,24 @@ class OceanicOSAppTests(unittest.TestCase):
             400,
         )
 
+    def test_attestation_subject_history_endpoint(self):
+        engine = app_module.attestation_engine
+        engine.attest("history-doc", "v1", [], 0.5)  # held
+        engine.attest("history-doc", "v2", [], 0.9)  # attested
+        resp = self.client.get("/attestations/history?subject=history-doc")
+        self.assertEqual(resp.status_code, 200)
+        h = resp.get_json()
+        self.assertEqual(h["count"], 2)
+        self.assertTrue(h["reverified"])
+        self.assertTrue(h["ever_held"])
+        self.assertEqual(h["confidence_delta"], 0.4)
+        self.assertEqual(h["latest_status"], "attested")
+        # unknown subject -> zero count, 200
+        empty = self.client.get("/attestations/history?subject=nope").get_json()
+        self.assertEqual(empty["count"], 0)
+        # missing subject -> 400
+        self.assertEqual(self.client.get("/attestations/history").status_code, 400)
+
     def test_attestation_batch_lookup(self):
         engine = app_module.attestation_engine
         engine.attest("batch-1", "output one", [], 0.9)
@@ -324,13 +342,16 @@ class OceanicOSAppTests(unittest.TestCase):
 
     def test_attestations_stats_endpoint(self):
         engine = app_module.attestation_engine
-        engine.attest("stats-a", "1", [], 0.95, actor="stats-user")
-        engine.attest("stats-b", "2", [], 0.5, actor="stats-user")  # held
+        engine.attest("stats-a", "1", ["plan"], 0.95, actor="stats-user")  # sourced
+        engine.attest("stats-b", "2", [], 0.5, actor="stats-user")  # held, no source
         stats = self.client.get("/attestations/stats?actor=stats-user").get_json()
         self.assertEqual(stats["total"], 2)
         self.assertEqual(stats["held"], 1)
         self.assertEqual(stats["by_actor"], {"stats-user": 2})
         self.assertIn("confidence_buckets", stats)
+        # source coverage: one of the two cites evidence
+        self.assertEqual(stats["sourced"], 1)
+        self.assertEqual(stats["sourced_ratio"], 0.5)
         # global stats include this actor's records
         self.assertGreaterEqual(self.client.get("/attestations/stats").get_json()["total"], 2)
 
@@ -524,6 +545,9 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("# TYPE oceanicos_cvi gauge", body)
         self.assertIn("oceanicos_chain_intact 1", body)
         self.assertIn("oceanicos_attestations_total", body)
+        # the evidence axis is scrapeable alongside the confidence axis
+        self.assertIn("# HELP oceanicos_sourced_ratio", body)
+        self.assertIn("oceanicos_sourced_ratio", body)
 
     def test_rules_evaluate_endpoint_explains_itself(self):
         response = self.client.post(
@@ -889,6 +913,8 @@ class OceanicOSAppTests(unittest.TestCase):
         # the held/SLA and audit signals are present
         self.assertIn("Held pending", body)
         self.assertIn("drift audit", body)
+        # the evidence axis has its own tile
+        self.assertIn("Sourced", body)
 
     def test_status_json_twin_matches_the_page(self):
         app_module.attestation_engine.attest("status-json-doc", "body", ["plan"], 0.9)
@@ -903,7 +929,8 @@ class OceanicOSAppTests(unittest.TestCase):
         # the underlying signals are all present and agree with /cvi
         self.assertEqual(data["cvi"]["cvi"], self.client.get("/cvi").get_json()["cvi"])
         for key in ("verify", "held_pending", "held_breached", "checkpoint",
-                    "audit", "attestations_total", "threshold", "generated_at"):
+                    "audit", "attestations_total", "threshold", "generated_at",
+                    "sourced_ratio"):
             self.assertIn(key, data)
 
         txt = self.client.get("/builds/export.txt")

@@ -378,6 +378,48 @@ class ByContentHashTests(unittest.TestCase):
         self.assertEqual(self.engine.by_content_hash("0" * 64), [])
 
 
+class SubjectHistoryTests(unittest.TestCase):
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        handle.close()
+        self.db_path = handle.name
+        self.engine = AttestationEngine(self.db_path)
+
+    def tearDown(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_timeline_tracks_reverification_and_trend(self):
+        # the same subject re-verified three times, with changing content and confidence
+        self.engine.attest("charter-v", "draft one", [], 0.5)   # held
+        self.engine.attest("charter-v", "draft two", [], 0.8)   # attested
+        self.engine.attest("charter-v", "draft three", [], 0.9)  # attested
+        h = self.engine.subject_history("charter-v")
+        self.assertEqual(h["count"], 3)
+        self.assertTrue(h["reverified"])
+        self.assertTrue(h["ever_held"])
+        self.assertEqual(h["first_confidence"], 0.5)
+        self.assertEqual(h["latest_confidence"], 0.9)
+        self.assertEqual(h["confidence_delta"], 0.4)
+        self.assertEqual(h["latest_status"], "attested")
+        # oldest to newest
+        self.assertEqual([a["confidence"] for a in h["attestations"]], [0.5, 0.8, 0.9])
+
+    def test_single_attestation_is_not_reverified(self):
+        self.engine.attest("solo", "only", [], 0.9)
+        h = self.engine.subject_history("solo")
+        self.assertEqual(h["count"], 1)
+        self.assertFalse(h["reverified"])
+        self.assertEqual(h["confidence_delta"], 0.0)
+
+    def test_unknown_subject_is_zero_count(self):
+        h = self.engine.subject_history("nope")
+        self.assertEqual(h["count"], 0)
+        self.assertEqual(h["attestations"], [])
+        self.assertIsNone(h["latest_status"])
+        self.assertFalse(h["reverified"])
+
+
 class ReceiptTests(unittest.TestCase):
     def setUp(self):
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
@@ -477,6 +519,28 @@ class StatsTests(unittest.TestCase):
         s = self.engine.stats(actor="alice")
         self.assertEqual(s["total"], 2)
         self.assertEqual(s["by_actor"], {"alice": 2})
+
+    def test_source_coverage_counts_cited_evidence(self):
+        # the setUp fixture attested all three with no sources
+        base = self.engine.stats()
+        self.assertEqual(base["sourced"], 0)
+        self.assertEqual(base["sourced_ratio"], 0.0)
+        # add one that cites evidence -> coverage rises to 1/4
+        self.engine.attest("d", "4", ["plan", "consensus:approve"], 0.95, actor="alice")
+        s = self.engine.stats()
+        self.assertEqual(s["total"], 4)
+        self.assertEqual(s["sourced"], 1)
+        self.assertEqual(s["sourced_ratio"], round(1 / 4, 3))
+
+    def test_empty_record_has_zero_source_coverage(self):
+        empty = AttestationEngine(self.db_path + ".src")
+        try:
+            s = empty.stats()
+            self.assertEqual(s["sourced"], 0)
+            self.assertEqual(s["sourced_ratio"], 0.0)
+        finally:
+            if os.path.exists(self.db_path + ".src"):
+                os.remove(self.db_path + ".src")
 
 
 class SearchTests(unittest.TestCase):
