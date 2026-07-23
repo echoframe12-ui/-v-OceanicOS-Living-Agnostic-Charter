@@ -214,6 +214,10 @@ def _cmd_gate(argv: list[str]) -> int:
         "--require-trustworthy", action="store_true",
         help="fail unless the signed checkpoint verifies (default: require only an intact chain)",
     )
+    parser.add_argument(
+        "--min-sourced", type=float, default=None,
+        help="fail if the fraction of attestations citing a source is below this floor (0-1)",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -221,6 +225,7 @@ def _cmd_gate(argv: list[str]) -> int:
     verify = engine.verify()
     released = HeldReviewLog(_db_path()).released_ids()
     cvi = engine.cvi(released_ids=released)
+    stats = engine.stats()
 
     reasons: list[str] = []
     if not verify["intact"]:
@@ -229,6 +234,8 @@ def _cmd_gate(argv: list[str]) -> int:
         reasons.append("not trustworthy (no valid signed checkpoint)")
     if args.min_cvi is not None and cvi["cvi"] < args.min_cvi:
         reasons.append(f"cvi {cvi['cvi']} below floor {args.min_cvi}")
+    if args.min_sourced is not None and stats["sourced_ratio"] < args.min_sourced:
+        reasons.append(f"sourced_ratio {stats['sourced_ratio']} below floor {args.min_sourced}")
     passed = not reasons
 
     report = {
@@ -236,10 +243,12 @@ def _cmd_gate(argv: list[str]) -> int:
         "intact": verify["intact"],
         "trustworthy": bool(verify.get("trustworthy")),
         "cvi": cvi["cvi"],
+        "sourced_ratio": stats["sourced_ratio"],
         "length": verify["length"],
         "policy": {
             "require_trustworthy": args.require_trustworthy,
             "min_cvi": args.min_cvi,
+            "min_sourced": args.min_sourced,
         },
         "reasons": reasons,
     }
@@ -247,7 +256,7 @@ def _cmd_gate(argv: list[str]) -> int:
         report,
         args.json,
         lambda r: f"gate: {'PASS' if r['passed'] else 'FAIL'}"
-        f" · cvi {r['cvi']} · length {r['length']}"
+        f" · cvi {r['cvi']} · sourced {r['sourced_ratio']} · length {r['length']}"
         f" · {'trustworthy' if r['trustworthy'] else ('intact' if r['intact'] else 'BROKEN')}"
         + (f" · {'; '.join(r['reasons'])}" if r["reasons"] else ""),
     )

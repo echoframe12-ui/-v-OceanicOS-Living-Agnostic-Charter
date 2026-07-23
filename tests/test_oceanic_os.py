@@ -155,6 +155,17 @@ class SubcommandTests(unittest.TestCase):
         self.assertEqual(report["policy"]["min_cvi"], 0.9)
         self.assertTrue(report["reasons"])
 
+    def test_gate_fails_below_source_coverage_floor(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "1", ["plan"], 0.9)  # sourced
+        engine.attest("b", "2", [], 0.9)         # no source -> coverage 0.5
+        code, out = self._run(["gate", "--min-sourced", "0.75"])
+        self.assertEqual(code, 1)
+        self.assertIn("sourced_ratio", out)
+        # passes when the floor is met
+        code_ok, _ = self._run(["gate", "--min-sourced", "0.5"])
+        self.assertEqual(code_ok, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -667,11 +667,17 @@ class AttestationEngine:
                 "mean_confidence": 0.0,
                 "min_confidence": 0.0,
                 "max_confidence": 0.0,
+                "sourced": 0,
+                "sourced_ratio": 0.0,
                 "by_actor": {},
                 "confidence_buckets": buckets,
             }
         confidences = [a["confidence"] for a in scope]
         held = [a for a in scope if a["status"] == "held"]
+        # evidence discipline: how much of the record actually cites a source.
+        # "Attest, don't assert" means carrying a source trail; a confident
+        # attestation with no sources is a smell the CVI cannot see.
+        sourced = sum(1 for a in scope if a["sources"])
         by_actor: dict[str, int] = {}
         for entry in scope:
             by_actor[entry["actor"]] = by_actor.get(entry["actor"], 0) + 1
@@ -692,6 +698,8 @@ class AttestationEngine:
             "mean_confidence": round(sum(confidences) / total, 3),
             "min_confidence": min(confidences),
             "max_confidence": max(confidences),
+            "sourced": sourced,
+            "sourced_ratio": round(sourced / total, 3),
             "by_actor": by_actor,
             "confidence_buckets": buckets,
         }

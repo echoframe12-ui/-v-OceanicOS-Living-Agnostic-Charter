@@ -520,6 +520,28 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(s["total"], 2)
         self.assertEqual(s["by_actor"], {"alice": 2})
 
+    def test_source_coverage_counts_cited_evidence(self):
+        # the setUp fixture attested all three with no sources
+        base = self.engine.stats()
+        self.assertEqual(base["sourced"], 0)
+        self.assertEqual(base["sourced_ratio"], 0.0)
+        # add one that cites evidence -> coverage rises to 1/4
+        self.engine.attest("d", "4", ["plan", "consensus:approve"], 0.95, actor="alice")
+        s = self.engine.stats()
+        self.assertEqual(s["total"], 4)
+        self.assertEqual(s["sourced"], 1)
+        self.assertEqual(s["sourced_ratio"], round(1 / 4, 3))
+
+    def test_empty_record_has_zero_source_coverage(self):
+        empty = AttestationEngine(self.db_path + ".src")
+        try:
+            s = empty.stats()
+            self.assertEqual(s["sourced"], 0)
+            self.assertEqual(s["sourced_ratio"], 0.0)
+        finally:
+            if os.path.exists(self.db_path + ".src"):
+                os.remove(self.db_path + ".src")
+
 
 class SearchTests(unittest.TestCase):
     def setUp(self):
