@@ -175,6 +175,17 @@
         </div>
 
         <div class="panel">
+          <h2>Subject // Timeline</h2>
+          <form id="history-form">
+            <div class="row">
+              <input id="history-subject" placeholder="subject (exact)" />
+              <button type="submit" style="flex:0 0 auto">Trace</button>
+            </div>
+          </form>
+          <div id="history-output" class="hint" style="margin-top:0.5rem">trust in one artifact over time — every re-verification, oldest to newest.</div>
+        </div>
+
+        <div class="panel">
           <h2>Governance // ADR</h2>
           <div id="adr-list" class="hint">loading decision records…</div>
           <pre id="adr-view" style="display:none"></pre>
@@ -442,10 +453,12 @@
           return `<tr><td class="dim">${label}</td><td style="width:100%"><span style="display:inline-block;height:0.8em;width:${width}%;min-width:${n ? 2 : 0}px;background:${hot ? '#7fbf7f' : '#bf7f7f'}"></span> ${n}</td></tr>`;
         }).join('');
         const actors = Object.entries(s.by_actor).map(([a, n]) => `${esc(a)}:${n}`).join(' · ');
+        const srcClass = s.sourced_ratio >= 0.74 ? 'ok' : (s.sourced_ratio >= 0.4 ? 'dim' : 'bad');
         $('stats').innerHTML = `
           <table>
             <tr><th>total</th><td>${s.total} <span class="dim">(${s.attested} attested, ${s.held} held · ratio ${s.held_ratio})</span></td></tr>
             <tr><th>confidence</th><td class="dim">mean ${s.mean_confidence} · min ${s.min_confidence} · max ${s.max_confidence}</td></tr>
+            <tr><th>sourced</th><td><span class="${srcClass}">${Math.round(s.sourced_ratio * 100)}%</span> <span class="dim">(${s.sourced}/${s.total} cite evidence)</span></td></tr>
           </table>
           <table style="margin-top:0.5rem">${bars}</table>
           <div class="hint" style="margin-top:0.4rem">by actor: ${actors || '—'}</div>`;
@@ -461,8 +474,27 @@
         $('receipt-output').innerHTML = `
           <span class="ok">${esc(a.subject)}</span> · <span class="${a.status === 'held' ? 'bad' : 'ok'}">${a.status}</span> · conf ${a.confidence}<br>
           <span class="dim">sha ${esc(a.sha256)}</span><br>
-          chain ${data.chain_position}/${data.chain_length} · integrity ${data.chain_intact ? '<span class="ok">ok</span>' : '<span class="bad">BROKEN</span>'}
+          chain ${data.chain_position}/${data.chain_length} · this entry ${data.entry_intact ? '<span class="ok">intact</span>' : '<span class="bad">TAMPERED</span>'}
+          · ledger ${data.chain_intact ? '<span class="ok">ok</span>' : '<span class="bad">BROKEN</span>'}
           · <span class="${data.sealed ? 'ok' : 'dim'}">${data.sealed ? 'SEALED' : 'unsealed'}</span>`;
+      });
+
+      // ---- per-subject timeline (round 57) ----
+      $('history-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const subject = $('history-subject').value;
+        if (!subject) { $('history-output').innerHTML = '<span class="hint">enter a subject.</span>'; return; }
+        const { data } = await fetchJson('/attestations/history?subject=' + encodeURIComponent(subject));
+        if (!data.count) { $('history-output').innerHTML = `<span class="dim">no attestations for “${esc(subject)}”.</span>`; return; }
+        const rows = data.attestations.map((a) =>
+          `<tr><td class="dim">#${a.id}</td><td class="${a.status === 'held' ? 'bad' : 'ok'}">${a.status}</td><td>${a.confidence}</td><td class="dim">${esc((a.created_at || '').slice(0, 19))}</td></tr>`).join('');
+        const delta = data.confidence_delta;
+        const arrow = delta > 0 ? '▲' : (delta < 0 ? '▼' : '·');
+        const dcls = delta > 0 ? 'ok' : (delta < 0 ? 'bad' : 'dim');
+        $('history-output').innerHTML = `
+          <div>${data.count} attestation${data.count === 1 ? '' : 's'} · ${data.reverified ? 'reverified' : 'single'} · ${data.ever_held ? '<span class="bad">held at some point</span>' : '<span class="ok">never held</span>'}</div>
+          <div class="dim">trend ${data.first_confidence} → ${data.latest_confidence} <span class="${dcls}">${arrow} ${delta}</span> · latest <span class="${data.latest_status === 'held' ? 'bad' : 'ok'}">${esc(data.latest_status)}</span></div>
+          <table style="margin-top:0.4rem"><tr><th>id</th><th>status</th><th>conf</th><th>when</th></tr>${rows}</table>`;
       });
 
       // ---- ADR browser (round 37) ----
