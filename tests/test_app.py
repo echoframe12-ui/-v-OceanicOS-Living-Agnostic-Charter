@@ -652,6 +652,61 @@ class OceanicOSAppTests(unittest.TestCase):
         finally:
             app_module.auth_registry.admin_users.discard("held-steward")
 
+    def test_attention_queue_ranks_pending_held_items(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.add("attn-steward")
+        try:
+            admin = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "attn-steward"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            member = self.client.post(
+                "/auth/register",
+                data=json.dumps({"username": "attn-member"}),
+                content_type="application/json",
+            ).get_json()["token"]
+            auth = {"Authorization": f"Bearer {admin}"}
+
+            # three held items, fresh (no SLA breach): least confident should rank first
+            a = engine.attest("attn-a", "1", ["plan"], 0.5, actor="attn-member")
+            b = engine.attest("attn-b", "2", [], 0.3, actor="attn-member")
+            c = engine.attest("attn-c", "3", ["plan"], 0.6, actor="attn-member")
+
+            queue = self.client.get("/attestations/attention", headers=auth).get_json()
+            ids = [i["id"] for i in queue if i["id"] in (a["id"], b["id"], c["id"])]
+            # least confident (0.3) first, then 0.5, then 0.6
+            self.assertEqual(ids, [b["id"], a["id"], c["id"]])
+            # signals behind the ranking are present
+            entry_b = next(i for i in queue if i["id"] == b["id"])
+            self.assertFalse(entry_b["sourced"])
+            self.assertIn("sla_breached", entry_b)
+            self.assertIn("age_seconds", entry_b)
+
+            # releasing an item removes it from the attention queue
+            self.client.post(
+                f"/attestations/{a['id']}/review",
+                data=json.dumps({"verdict": "release", "reason": "reviewed"}),
+                content_type="application/json",
+                headers=auth,
+            )
+            after = self.client.get("/attestations/attention", headers=auth).get_json()
+            self.assertNotIn(a["id"], [i["id"] for i in after])
+
+            # admin only; bad limit -> 400
+            self.assertEqual(
+                self.client.get(
+                    "/attestations/attention",
+                    headers={"Authorization": f"Bearer {member}"},
+                ).status_code,
+                403,
+            )
+            self.assertEqual(
+                self.client.get("/attestations/attention?limit=x", headers=auth).status_code, 400
+            )
+        finally:
+            app_module.auth_registry.admin_users.discard("attn-steward")
+
     def test_held_queue_and_overview_carry_sla_aging(self):
         engine = app_module.attestation_engine
         app_module.auth_registry.admin_users.add("sla-steward")

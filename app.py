@@ -477,6 +477,46 @@ def list_held_attestations():
     return jsonify(items)
 
 
+@app.route("/attestations/attention", methods=["GET"])
+@require_admin
+def attention_queue():
+    """The steward's prioritized worklist — held items ranked by urgency.
+
+    The held endpoint lists the queue; this ranks it. Only *pending* held items
+    (not yet released or upheld), ordered SLA-breached first (the hard deadline),
+    then least confident (the biggest risk), then oldest — so a steward works the
+    queue from the most overdue and least trustworthy down. Each item carries the
+    signals behind the ranking: `sla_breached`, `age_seconds`, `confidence`, and
+    whether it `sourced` any evidence. `?limit=` caps the list. Admin only.
+    """
+    limit = request.args.get("limit", type=int) if "limit" in request.args else None
+    if "limit" in request.args and limit is None:
+        return jsonify({"error": "limit must be an integer"}), 400
+    released = held_review_log.released_ids()
+    items = []
+    for att in attestation_engine.held():
+        if att["id"] in released or _review_status(att["id"], released) != "pending":
+            continue
+        sla = sla_status(att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS)
+        items.append(
+            {
+                "id": att["id"],
+                "subject": att["subject"],
+                "actor": att["actor"],
+                "confidence": att["confidence"],
+                "created_at": att["created_at"],
+                "sourced": bool(att["sources"]),
+                "sla_breached": bool(sla.get("sla_breached")),
+                "age_seconds": sla.get("age_seconds"),
+            }
+        )
+    # most urgent first: breached before not, then least confident, then oldest
+    items.sort(key=lambda i: (not i["sla_breached"], i["confidence"], -(i["age_seconds"] or 0)))
+    if limit is not None:
+        items = items[:limit]
+    return jsonify(items)
+
+
 @app.route("/attestations/<int:att_id>/review", methods=["POST"])
 @require_admin
 def review_held_attestation(att_id: int):
