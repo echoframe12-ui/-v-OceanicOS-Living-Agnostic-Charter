@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from unittest.mock import patch
 
@@ -937,6 +938,27 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(txt.status_code, 200)
         self.assertIn("text/plain", txt.content_type)
         self.assertIn("GROUND TRUTH", txt.get_data(as_text=True))
+
+    def test_status_digest_is_signed_and_verifiable(self):
+        import status_digest
+        app_module.attestation_engine.attest("digest-doc", "body", ["plan"], 0.9)
+        with patch.dict("os.environ", {"OCEANICOS_SIGNING_KEY": "digest-key"}, clear=False):
+            data = self.client.get("/status/digest").get_json()
+        self.assertTrue(data["signed"])
+        self.assertIn(data["posture"], ("TRUSTWORTHY", "INTACT", "BROKEN"))
+        # the signature verifies under the key and fails under a wrong one
+        sig = data["signature"]
+        self.assertTrue(status_digest.verify(data, sig, "digest-key"))
+        self.assertFalse(status_digest.verify(data, sig, "wrong-key"))
+        # tampering the posture invalidates the signature
+        self.assertFalse(status_digest.verify({**data, "posture": "BROKEN"}, sig, "digest-key"))
+
+    def test_status_digest_unsigned_without_key(self):
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("OCEANICOS_SIGNING_KEY", None)
+            data = self.client.get("/status/digest").get_json()
+        self.assertFalse(data["signed"])
+        self.assertIsNone(data["signature"])
 
         observer = self.client.get("/observer")
         self.assertEqual(observer.status_code, 200)

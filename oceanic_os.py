@@ -26,7 +26,7 @@ import identity
 import models
 import readiness
 from attestation import CONFIDENCE_THRESHOLD, AttestationEngine
-from held_reviews import HeldReviewLog
+from held_reviews import HeldReviewLog, sla_status
 from models import ModelAdapter, ModelRouter
 
 DEFAULT_MANIFEST = "boot/init.v1"
@@ -218,14 +218,35 @@ def _cmd_gate(argv: list[str]) -> int:
         "--min-sourced", type=float, default=None,
         help="fail if the fraction of attestations citing a source is below this floor (0-1)",
     )
+    parser.add_argument(
+        "--max-held-pending", type=int, default=None,
+        help="fail if more than this many held attestations await a steward decision",
+    )
+    parser.add_argument(
+        "--no-sla-breach", action="store_true",
+        help="fail if any pending held attestation is past the review SLA",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     engine = AttestationEngine(_db_path())
+    review_log = HeldReviewLog(_db_path())
     verify = engine.verify()
-    released = HeldReviewLog(_db_path()).released_ids()
+    released = review_log.released_ids()
     cvi = engine.cvi(released_ids=released)
     stats = engine.stats()
+
+    # held-queue health — the operational dimension, computed as the service does
+    sla_seconds = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
+    held = engine.held()
+    held_pending = [att for att in held if att["id"] not in released]
+    held_breached = sum(
+        1
+        for att in held
+        if sla_status(
+            att["created_at"], review_log.latest_for(att["id"]), sla_seconds
+        ).get("sla_breached")
+    )
 
     reasons: list[str] = []
     if not verify["intact"]:
@@ -236,6 +257,10 @@ def _cmd_gate(argv: list[str]) -> int:
         reasons.append(f"cvi {cvi['cvi']} below floor {args.min_cvi}")
     if args.min_sourced is not None and stats["sourced_ratio"] < args.min_sourced:
         reasons.append(f"sourced_ratio {stats['sourced_ratio']} below floor {args.min_sourced}")
+    if args.max_held_pending is not None and len(held_pending) > args.max_held_pending:
+        reasons.append(f"held_pending {len(held_pending)} over limit {args.max_held_pending}")
+    if args.no_sla_breach and held_breached:
+        reasons.append(f"{held_breached} held attestation(s) past the review SLA")
     passed = not reasons
 
     report = {
@@ -244,11 +269,15 @@ def _cmd_gate(argv: list[str]) -> int:
         "trustworthy": bool(verify.get("trustworthy")),
         "cvi": cvi["cvi"],
         "sourced_ratio": stats["sourced_ratio"],
+        "held_pending": len(held_pending),
+        "held_breached": held_breached,
         "length": verify["length"],
         "policy": {
             "require_trustworthy": args.require_trustworthy,
             "min_cvi": args.min_cvi,
             "min_sourced": args.min_sourced,
+            "max_held_pending": args.max_held_pending,
+            "no_sla_breach": args.no_sla_breach,
         },
         "reasons": reasons,
     }
@@ -256,7 +285,8 @@ def _cmd_gate(argv: list[str]) -> int:
         report,
         args.json,
         lambda r: f"gate: {'PASS' if r['passed'] else 'FAIL'}"
-        f" · cvi {r['cvi']} · sourced {r['sourced_ratio']} · length {r['length']}"
+        f" · cvi {r['cvi']} · sourced {r['sourced_ratio']}"
+        f" · held {r['held_pending']} ({r['held_breached']} past SLA) · length {r['length']}"
         f" · {'trustworthy' if r['trustworthy'] else ('intact' if r['intact'] else 'BROKEN')}"
         + (f" · {'; '.join(r['reasons'])}" if r["reasons"] else ""),
     )
