@@ -24,6 +24,7 @@ import metrics
 import openapi
 import readiness
 from agent import AgentLoop
+from consensus_log import ConsensusLog
 from cvi_history import CviHistory
 from drift_audit import DriftAuditLog
 from verify_ledger import verify_bundle
@@ -137,6 +138,7 @@ usage_log = UsageLog(str(service.db_path))
 held_review_log = HeldReviewLog(str(service.db_path))
 cvi_history = CviHistory(str(service.db_path))
 drift_audit_log = DriftAuditLog(str(service.db_path))
+consensus_log = ConsensusLog(str(service.db_path))
 # Time-to-decision SLA for held attestations (seconds). 0 disables breach flags.
 HELD_SLA_SECONDS = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
 
@@ -397,7 +399,31 @@ def model_consensus():
     payload = request.get_json(silent=True) or {}
     prompt = payload.get("prompt", "")
     # panel of 4: the three model heuristics plus the rules engine anchor
-    return jsonify(model_router.route_all(prompt, panel=4))
+    result = model_router.route_all(prompt, panel=4)
+    # dissent is data — record the disagreement (prompt hashed, never stored raw)
+    recorded = consensus_log.record(prompt, result)
+    result["dissent_score"] = recorded["dissent_score"]
+    return jsonify(result)
+
+
+@app.route("/consensus/history", methods=["GET"])
+def consensus_history():
+    """The dissent ledger — how split the panel has been over time.
+
+    Newest-first evaluations with the majority, dissent flag, and dissent score.
+    Public and aggregate: only the prompt's SHA-256 is recorded, never its text,
+    so the trend is legible without exposing what was asked. `?limit=` caps it.
+    """
+    limit = request.args.get("limit", type=int) if "limit" in request.args else None
+    if "limit" in request.args and limit is None:
+        return jsonify({"error": "limit must be an integer"}), 400
+    return jsonify(consensus_log.list(limit=limit))
+
+
+@app.route("/consensus/stats", methods=["GET"])
+def consensus_stats():
+    """Aggregate dissent — total evaluations, the dissent rate, and the mean split."""
+    return jsonify(consensus_log.stats())
 
 
 @app.route("/rules/evaluate", methods=["POST"])
@@ -945,6 +971,7 @@ def prometheus_metrics():
         {"name": "oceanicos_chain_trustworthy", "help": "Chain intact and signed head verified (1 yes, 0 no)", "value": bool(verify.get("trustworthy"))},
         {"name": "oceanicos_checkpoint_auto", "help": "Automatic checkpoint sealing enabled (1 yes, 0 no)", "value": policy["auto"]},
         {"name": "oceanicos_model_adapters", "help": "Registered dissent-panel adapters", "value": len(model_router.list_adapters())},
+        {"name": "oceanicos_dissent_rate", "help": "Fraction of recorded panel evaluations that surfaced dissent (0-1)", "value": consensus_log.stats()["dissent_rate"]},
         {"name": "oceanicos_last_audit_intact", "help": "Latest drift audit found the chain intact (1 yes/none, 0 broken)", "value": (drift_audit_log.latest() or {}).get("intact", True)},
     ]
     return Response(metrics.render(snapshot), mimetype=metrics.CONTENT_TYPE)

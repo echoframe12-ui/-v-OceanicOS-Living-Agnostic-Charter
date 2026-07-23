@@ -210,6 +210,30 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertTrue(payload["dissent"])
         # the rules engine sits on the panel as the deterministic anchor
         self.assertIn("rules-engine", payload["adapters"])
+        # dissent is recorded as data — the response carries the score
+        self.assertIn("dissent_score", payload)
+
+    def test_consensus_ledger_records_dissent(self):
+        # a couple of evaluations are recorded (prompt hashed, never stored raw)
+        for prompt in ("Plan the charter build", "Verify the anchor"):
+            self.client.post(
+                "/models/consensus",
+                data=json.dumps({"prompt": prompt}),
+                content_type="application/json",
+            )
+        history = self.client.get("/consensus/history?limit=5").get_json()
+        self.assertTrue(history)
+        entry = history[0]
+        self.assertEqual(len(entry["prompt_sha256"]), 64)
+        self.assertIn("dissent_score", entry)
+        self.assertIn("majority", entry)
+        stats = self.client.get("/consensus/stats").get_json()
+        self.assertGreaterEqual(stats["evaluations"], 2)
+        self.assertIn("dissent_rate", stats)
+        # dissent is observable on /metrics
+        self.assertIn("oceanicos_dissent_rate", self.client.get("/metrics").get_data(as_text=True))
+        # bad limit -> 400
+        self.assertEqual(self.client.get("/consensus/history?limit=x").status_code, 400)
 
     def test_attestation_lookup_by_content_and_hash(self):
         engine = app_module.attestation_engine
