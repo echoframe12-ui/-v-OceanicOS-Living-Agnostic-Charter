@@ -26,6 +26,7 @@ import identity
 import models
 import readiness
 from attestation import CONFIDENCE_THRESHOLD, AttestationEngine
+from held_reviews import HeldReviewLog
 from models import ModelAdapter, ModelRouter
 
 DEFAULT_MANIFEST = "boot/init.v1"
@@ -195,7 +196,71 @@ def _cmd_ready(argv: list[str]) -> int:
     return 0 if report["ready"] else 1
 
 
-_COMMANDS = {"boot": _cmd_boot, "verify": _cmd_verify, "stats": _cmd_stats, "ready": _cmd_ready}
+def _cmd_gate(argv: list[str]) -> int:
+    """A CI trust gate: pass only if the ledger meets the required posture.
+
+    Unlike `verify` (chain integrity alone), this is a policy gate — it can also
+    require the signed-checkpoint `trustworthy` state and a minimum CVI, so a
+    build fails when trust *regresses*, not only when the chain breaks. Released
+    held items are credited to the CVI, matching what the service reports. Prints
+    PASS/FAIL with the reasons and exits 0 (pass) or 1 (fail).
+    """
+    parser = argparse.ArgumentParser(prog="oceanic-os gate")
+    parser.add_argument(
+        "--min-cvi", type=float, default=None,
+        help="fail if the CVI is below this floor (0-1)",
+    )
+    parser.add_argument(
+        "--require-trustworthy", action="store_true",
+        help="fail unless the signed checkpoint verifies (default: require only an intact chain)",
+    )
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    engine = AttestationEngine(_db_path())
+    verify = engine.verify()
+    released = HeldReviewLog(_db_path()).released_ids()
+    cvi = engine.cvi(released_ids=released)
+
+    reasons: list[str] = []
+    if not verify["intact"]:
+        reasons.append(f"chain broken @ {verify.get('broken_at')}")
+    if args.require_trustworthy and not verify.get("trustworthy"):
+        reasons.append("not trustworthy (no valid signed checkpoint)")
+    if args.min_cvi is not None and cvi["cvi"] < args.min_cvi:
+        reasons.append(f"cvi {cvi['cvi']} below floor {args.min_cvi}")
+    passed = not reasons
+
+    report = {
+        "passed": passed,
+        "intact": verify["intact"],
+        "trustworthy": bool(verify.get("trustworthy")),
+        "cvi": cvi["cvi"],
+        "length": verify["length"],
+        "policy": {
+            "require_trustworthy": args.require_trustworthy,
+            "min_cvi": args.min_cvi,
+        },
+        "reasons": reasons,
+    }
+    _emit(
+        report,
+        args.json,
+        lambda r: f"gate: {'PASS' if r['passed'] else 'FAIL'}"
+        f" · cvi {r['cvi']} · length {r['length']}"
+        f" · {'trustworthy' if r['trustworthy'] else ('intact' if r['intact'] else 'BROKEN')}"
+        + (f" · {'; '.join(r['reasons'])}" if r["reasons"] else ""),
+    )
+    return 0 if passed else 1
+
+
+_COMMANDS = {
+    "boot": _cmd_boot,
+    "verify": _cmd_verify,
+    "stats": _cmd_stats,
+    "ready": _cmd_ready,
+    "gate": _cmd_gate,
+}
 
 
 def main(argv: list[str] | None = None) -> int:
