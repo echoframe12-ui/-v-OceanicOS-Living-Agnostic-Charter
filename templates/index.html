@@ -175,6 +175,17 @@
         </div>
 
         <div class="panel">
+          <h2>Subject // Timeline</h2>
+          <form id="history-form">
+            <div class="row">
+              <input id="history-subject" placeholder="subject (exact)" />
+              <button type="submit" style="flex:0 0 auto">Trace</button>
+            </div>
+          </form>
+          <div id="history-output" class="hint" style="margin-top:0.5rem">trust in one artifact over time — every re-verification, oldest to newest.</div>
+        </div>
+
+        <div class="panel">
           <h2>Governance // ADR</h2>
           <div id="adr-list" class="hint">loading decision records…</div>
           <pre id="adr-view" style="display:none"></pre>
@@ -463,6 +474,24 @@
           <span class="dim">sha ${esc(a.sha256)}</span><br>
           chain ${data.chain_position}/${data.chain_length} · integrity ${data.chain_intact ? '<span class="ok">ok</span>' : '<span class="bad">BROKEN</span>'}
           · <span class="${data.sealed ? 'ok' : 'dim'}">${data.sealed ? 'SEALED' : 'unsealed'}</span>`;
+      });
+
+      // ---- per-subject timeline (round 57) ----
+      $('history-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const subject = $('history-subject').value;
+        if (!subject) { $('history-output').innerHTML = '<span class="hint">enter a subject.</span>'; return; }
+        const { data } = await fetchJson('/attestations/history?subject=' + encodeURIComponent(subject));
+        if (!data.count) { $('history-output').innerHTML = `<span class="dim">no attestations for “${esc(subject)}”.</span>`; return; }
+        const rows = data.attestations.map((a) =>
+          `<tr><td class="dim">#${a.id}</td><td class="${a.status === 'held' ? 'bad' : 'ok'}">${a.status}</td><td>${a.confidence}</td><td class="dim">${esc((a.created_at || '').slice(0, 19))}</td></tr>`).join('');
+        const delta = data.confidence_delta;
+        const arrow = delta > 0 ? '▲' : (delta < 0 ? '▼' : '·');
+        const dcls = delta > 0 ? 'ok' : (delta < 0 ? 'bad' : 'dim');
+        $('history-output').innerHTML = `
+          <div>${data.count} attestation${data.count === 1 ? '' : 's'} · ${data.reverified ? 'reverified' : 'single'} · ${data.ever_held ? '<span class="bad">held at some point</span>' : '<span class="ok">never held</span>'}</div>
+          <div class="dim">trend ${data.first_confidence} → ${data.latest_confidence} <span class="${dcls}">${arrow} ${delta}</span> · latest <span class="${data.latest_status === 'held' ? 'bad' : 'ok'}">${esc(data.latest_status)}</span></div>
+          <table style="margin-top:0.4rem"><tr><th>id</th><th>status</th><th>conf</th><th>when</th></tr>${rows}</table>`;
       });
 
       // ---- ADR browser (round 37) ----

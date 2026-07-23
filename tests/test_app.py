@@ -1299,6 +1299,13 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("boot-splash", body)
         self.assertIn("/static/brand/oceanicos-badge.png", body)
 
+    def test_console_has_subject_timeline_panel(self):
+        body = self.client.get("/").get_data(as_text=True)
+        # the round-53 subject history is surfaced as an interactive console panel
+        self.assertIn("Subject // Timeline", body)
+        self.assertIn('id="history-form"', body)
+        self.assertIn("/attestations/history?subject=", body)
+
     def test_node_mounts(self):
         mounted = self.client.post(
             "/nodes",
