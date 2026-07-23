@@ -453,10 +453,12 @@
           return `<tr><td class="dim">${label}</td><td style="width:100%"><span style="display:inline-block;height:0.8em;width:${width}%;min-width:${n ? 2 : 0}px;background:${hot ? '#7fbf7f' : '#bf7f7f'}"></span> ${n}</td></tr>`;
         }).join('');
         const actors = Object.entries(s.by_actor).map(([a, n]) => `${esc(a)}:${n}`).join(' · ');
+        const srcClass = s.sourced_ratio >= 0.74 ? 'ok' : (s.sourced_ratio >= 0.4 ? 'dim' : 'bad');
         $('stats').innerHTML = `
           <table>
             <tr><th>total</th><td>${s.total} <span class="dim">(${s.attested} attested, ${s.held} held · ratio ${s.held_ratio})</span></td></tr>
             <tr><th>confidence</th><td class="dim">mean ${s.mean_confidence} · min ${s.min_confidence} · max ${s.max_confidence}</td></tr>
+            <tr><th>sourced</th><td><span class="${srcClass}">${Math.round(s.sourced_ratio * 100)}%</span> <span class="dim">(${s.sourced}/${s.total} cite evidence)</span></td></tr>
           </table>
           <table style="margin-top:0.5rem">${bars}</table>
           <div class="hint" style="margin-top:0.4rem">by actor: ${actors || '—'}</div>`;
@@ -472,7 +474,8 @@
         $('receipt-output').innerHTML = `
           <span class="ok">${esc(a.subject)}</span> · <span class="${a.status === 'held' ? 'bad' : 'ok'}">${a.status}</span> · conf ${a.confidence}<br>
           <span class="dim">sha ${esc(a.sha256)}</span><br>
-          chain ${data.chain_position}/${data.chain_length} · integrity ${data.chain_intact ? '<span class="ok">ok</span>' : '<span class="bad">BROKEN</span>'}
+          chain ${data.chain_position}/${data.chain_length} · this entry ${data.entry_intact ? '<span class="ok">intact</span>' : '<span class="bad">TAMPERED</span>'}
+          · ledger ${data.chain_intact ? '<span class="ok">ok</span>' : '<span class="bad">BROKEN</span>'}
           · <span class="${data.sealed ? 'ok' : 'dim'}">${data.sealed ? 'SEALED' : 'unsealed'}</span>`;
       });
 
