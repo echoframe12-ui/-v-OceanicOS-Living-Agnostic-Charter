@@ -545,6 +545,9 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("# TYPE oceanicos_cvi gauge", body)
         self.assertIn("oceanicos_chain_intact 1", body)
         self.assertIn("oceanicos_attestations_total", body)
+        # the evidence axis is scrapeable alongside the confidence axis
+        self.assertIn("# HELP oceanicos_sourced_ratio", body)
+        self.assertIn("oceanicos_sourced_ratio", body)
 
     def test_rules_evaluate_endpoint_explains_itself(self):
         response = self.client.post(
@@ -910,6 +913,8 @@ class OceanicOSAppTests(unittest.TestCase):
         # the held/SLA and audit signals are present
         self.assertIn("Held pending", body)
         self.assertIn("drift audit", body)
+        # the evidence axis has its own tile
+        self.assertIn("Sourced", body)
 
     def test_status_json_twin_matches_the_page(self):
         app_module.attestation_engine.attest("status-json-doc", "body", ["plan"], 0.9)
@@ -924,7 +929,8 @@ class OceanicOSAppTests(unittest.TestCase):
         # the underlying signals are all present and agree with /cvi
         self.assertEqual(data["cvi"]["cvi"], self.client.get("/cvi").get_json()["cvi"])
         for key in ("verify", "held_pending", "held_breached", "checkpoint",
-                    "audit", "attestations_total", "threshold", "generated_at"):
+                    "audit", "attestations_total", "threshold", "generated_at",
+                    "sourced_ratio"):
             self.assertIn(key, data)
 
         txt = self.client.get("/builds/export.txt")

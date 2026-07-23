@@ -57,6 +57,11 @@
         <div class="u">{{ cvi.samples }} in index</div>
       </div>
       <div class="tile">
+        <div class="k">Sourced</div>
+        <div class="v {{ 'ok' if sourced_ratio >= threshold else ('warn' if sourced_ratio >= 0.4 else 'bad') }}">{{ '%.0f'|format(sourced_ratio * 100) }}%</div>
+        <div class="u">cite evidence</div>
+      </div>
+      <div class="tile">
         <div class="k">Held pending</div>
         <div class="v {{ 'bad' if held_breached else ('warn' if held_pending else 'dim') }}">{{ held_pending }}</div>
         <div class="u">{{ held_breached }} past SLA</div>

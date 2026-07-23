@@ -784,6 +784,7 @@ def _status_snapshot() -> dict[str, Any]:
     verify = attestation_engine.verify()
     released = held_review_log.released_ids()
     cvi = attestation_engine.cvi(released_ids=released)
+    stats = attestation_engine.stats()
     held = attestation_engine.held()
     held_pending = [att for att in held if att["id"] not in released]
     held_breached = sum(
@@ -804,6 +805,7 @@ def _status_snapshot() -> dict[str, Any]:
         "posture_class": posture_class,
         "verify": verify,
         "cvi": cvi,
+        "sourced_ratio": stats["sourced_ratio"],
         "attestations_total": len(attestation_engine.list()),
         "held_pending": len(held_pending),
         "held_breached": held_breached,
@@ -870,6 +872,7 @@ def prometheus_metrics():
         {"name": "oceanicos_held_pending", "help": "Held attestations awaiting a steward decision", "value": len(held_pending)},
         {"name": "oceanicos_held_sla_breached", "help": "Pending held attestations past the review SLA", "value": held_breached},
         {"name": "oceanicos_cvi", "help": "Composite Verification Index (0-1), released items credited", "value": attestation_engine.cvi(released_ids=released)["cvi"]},
+        {"name": "oceanicos_sourced_ratio", "help": "Fraction of attestations that cite at least one source (0-1)", "value": attestation_engine.stats()["sourced_ratio"]},
         {"name": "oceanicos_builds_total", "help": "Total builds in the ledger", "value": len(service.list_builds())},
         {"name": "oceanicos_users_total", "help": "Registered accounts", "value": len(auth_registry.list_users())},
         {"name": "oceanicos_chain_intact", "help": "Attestation hash chain integrity (1 intact, 0 broken)", "value": bool(verify["intact"])},
