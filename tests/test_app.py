@@ -1442,6 +1442,13 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("/consensus/stats", body)
         self.assertIn("dissent ledger", body)
 
+    def test_console_has_evolution_panel(self):
+        body = self.client.get("/").get_data(as_text=True)
+        # the round-67 compounding footprint has a console panel
+        self.assertIn("Evolution // Compounding", body)
+        self.assertIn('id="evolution"', body)
+        self.assertIn("/evolution", body)
+
     def test_node_mounts(self):
         mounted = self.client.post(
             "/nodes",
