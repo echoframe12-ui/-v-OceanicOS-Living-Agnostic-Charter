@@ -17,6 +17,7 @@ import requestlog
 import adr
 import anchor
 import badge
+import doctrine
 import identity
 import status_digest
 import metrics
@@ -1060,6 +1061,19 @@ def record_decision():
 @app.route("/decisions", methods=["GET"])
 def list_decisions():
     return jsonify(decision_registry.list())
+
+
+@app.route("/doctrine", methods=["GET"])
+def serve_doctrine():
+    """The Ω∞v Doctrine as a code-backed map — each layer points at what implements it.
+
+    The system's compressed self-definition, held to its own creed: every layer
+    marked `shipped` names the endpoints, modules, and decision records that make
+    it real, and the two physical layers (binary + hardware key) are honestly
+    `shipped: false`. `tests/test_doctrine.py` fails if any cited path stops
+    resolving, so the Doctrine cannot drift from the code it describes.
+    """
+    return jsonify(doctrine.summary())
 
 
 @app.route("/adr", methods=["GET"])

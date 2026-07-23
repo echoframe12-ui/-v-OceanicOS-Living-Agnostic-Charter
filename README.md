@@ -146,6 +146,7 @@ Use the endpoints:
 - GET /nodes
 - GET /pricing
 - GET /observer
+- GET /doctrine
 - GET /anchor
 - GET /adr
 - GET /adr/<number>
@@ -296,6 +297,7 @@ OceanicOS attests instead of asserting (see [DECISIONS/0001-validated-hesitation
 - The system states one name of itself, root to charter (`/` → Ω∞v Compiler → OceanicOS → Living Agnostic Charter). The boot banner and `/observer` both speak it from the single source in [`identity.py`](identity.py); see [TREE.md](TREE.md) and [DECISIONS/0016](DECISIONS/0016-canonical-identity.md).
 - The platform is offered commercially as Verification-as-a-Service — see [docs/VAAS.md](docs/VAAS.md) and `GET /pricing`.
 - Where OceanicOS sits in the AI-engineering landscape — the verification layer a self-evolving agent needs — is argued in [docs/POSITIONING.md](docs/POSITIONING.md).
+- The system's compressed self-definition is [DOCTRINE.md](DOCTRINE.md), served live at `GET /doctrine`. It is **code-backed**: every layer marked shipped names the endpoints, modules, and decision records that implement it, the two physical layers (binary + hardware key) are honestly marked *not* shipped, and [`tests/test_doctrine.py`](tests/test_doctrine.py) fails if any cited path stops resolving — the doctrine is held to the platform's own "attest, don't assert" creed (see [DECISIONS/0055](DECISIONS/0055-doctrine-as-code-backed-map.md)).
 
 ## Identity and Multi-User Attribution
 
