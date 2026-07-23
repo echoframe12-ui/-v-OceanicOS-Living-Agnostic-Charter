@@ -144,6 +144,7 @@
 
         <div class="panel">
           <h2>Held Review // Steward SLA</h2>
+          <div id="attention-list" class="hint" style="margin-bottom:0.6rem">worklist loads with your steward token.</div>
           <div id="held-queue">identify as a steward to load the queue.</div>
         </div>
 
@@ -313,7 +314,7 @@
         authToken = data.token;
         const who = await fetchJson('/auth/whoami', { headers: authHeaders() });
         $('session').innerHTML = `identified as <span class="ok">${esc(who.data.actor)}</span> · role <span class="badge">${esc(who.data.role)}</span> · tier <span class="badge">${esc(who.data.tier)}</span>`;
-        loadHeldQueue();
+        loadHeldQueue(); loadAttention();
       });
 
       // ---- build ----
@@ -419,11 +420,20 @@
         $('held-queue').innerHTML = `<table><thead><tr><th>#</th><th>subject</th><th>conf</th><th>sla</th><th>action</th></tr></thead><tbody>${rows}</tbody></table>`;
         $('held-queue').querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => reviewHeld(b.dataset.id, b.dataset.v)));
       }
+      async function loadAttention() {
+        if (!authToken) { $('attention-list').innerHTML = '<span class="hint">worklist loads with your steward token.</span>'; return; }
+        const { ok, data } = await fetchJson('/attestations/attention?limit=5', { headers: authHeaders() });
+        if (!ok) { $('attention-list').innerHTML = ''; return; }  // held-queue shows the auth error
+        if (!data.length) { $('attention-list').innerHTML = '<span class="dim">worklist clear — nothing pending.</span>'; return; }
+        const rows = data.map((a, i) =>
+          `<div>${i + 1}. <span class="${a.sla_breached ? 'bad' : 'dim'}">${a.sla_breached ? 'BREACH' : 'ok'}</span> · conf <span class="${a.confidence < 0.5 ? 'bad' : ''}">${a.confidence.toFixed(2)}</span> · ${a.sourced ? '<span class="ok">sourced</span>' : '<span class="bad">no source</span>'} · ${esc(a.subject)}</div>`).join('');
+        $('attention-list').innerHTML = `<div class="hint" style="margin-bottom:0.3rem">⚑ work these first:</div>${rows}`;
+      }
       async function reviewHeld(id, verdict) {
         const reason = prompt(`Reason to ${verdict} attestation #${id}:`, 'reviewed out of band');
         if (reason === null) return;
         await fetchJson(`/attestations/${id}/review`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ verdict, reason }) });
-        loadHeldQueue(); loadIntegrity(); refreshDashboard();
+        loadHeldQueue(); loadAttention(); loadIntegrity(); refreshDashboard();
       }
 
       // ---- anchor ----
