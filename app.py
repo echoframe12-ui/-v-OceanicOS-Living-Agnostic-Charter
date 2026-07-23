@@ -18,6 +18,7 @@ import adr
 import anchor
 import badge
 import identity
+import status_digest
 import metrics
 import openapi
 import readiness
@@ -844,6 +845,36 @@ def status_json():
     snapshot = _status_snapshot()
     snapshot.pop("posture_class", None)
     return jsonify(snapshot)
+
+
+@app.route("/status/digest", methods=["GET"])
+def status_digest_endpoint():
+    """A signed, portable digest of the platform's own posture — attest, don't assert.
+
+    A compact canonical snapshot (posture, CVI, source coverage, chain state, held
+    queue, checkpoint head, timestamp) plus an operator-key HMAC over it, so a
+    third party handed the digest can confirm it genuinely came from this platform
+    at that time rather than being fabricated. `signed` is false (and `signature`
+    null) when no `OCEANICOS_SIGNING_KEY` is configured — the platform never claims
+    a signature it cannot make. Verify with `status_digest.verify`.
+    """
+    snap = _status_snapshot()
+    cp = snap["checkpoint"]
+    payload = {
+        "posture": snap["posture"],
+        "cvi": snap["cvi"]["cvi"],
+        "sourced_ratio": snap["sourced_ratio"],
+        "chain_intact": snap["verify"]["intact"],
+        "trustworthy": bool(snap["verify"].get("trustworthy")),
+        "chain_length": snap["verify"]["length"],
+        "held_pending": snap["held_pending"],
+        "held_breached": snap["held_breached"],
+        "checkpoint_head": cp["head_hash"] if cp else None,
+        "generated_at": snap["generated_at"],
+    }
+    key = os.getenv("OCEANICOS_SIGNING_KEY") or None
+    signature = status_digest.sign(key, payload) if key else None
+    return jsonify({**payload, "signed": signature is not None, "signature": signature})
 
 
 @app.route("/metrics", methods=["GET"])
