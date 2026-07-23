@@ -113,11 +113,12 @@ LAYERS: list[dict[str, Any]] = [
     },
     {
         "layer": "Final State · Continuous Becoming",
-        "principle": "Observer runs, the universe compiles via localhost, Exit 0, continue.",
+        "principle": "Observer runs, the universe compiles via localhost, Exit 0, "
+        "continue — recompile, then compound: the append-only ledgers only grow.",
         "shipped": True,
         "evidence": {
-            "endpoints": ["/status", "/status.json", "/metrics"],
-            "modules": ["status_digest"],
+            "endpoints": ["/status", "/status.json", "/metrics", "/evolution"],
+            "modules": ["status_digest", "evolution"],
             "decisions": [44, 45],
         },
     },

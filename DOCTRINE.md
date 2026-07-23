@@ -53,7 +53,7 @@ physical artifact. `GET /doctrine` serves this map live.
 INPUT → DELAY (2.5s) → DIVERGENCE (3+ models) → DISSENT (contradictions surfaced)
       → VERIFICATION (ground truth, provenance) → HUMAN JUDGMENT (the veto)
       → ATTESTATION (hash, interval, source trail) → AUDIT (perpetual drift)
-      → DRIFT (measured, logged) → RECOMPILE → ↺ CONTINUE
+      → DRIFT (measured, logged) → RECOMPILE → COMPOUND (append-only ledgers grow) → ↺ CONTINUE
 ```
 
 ---

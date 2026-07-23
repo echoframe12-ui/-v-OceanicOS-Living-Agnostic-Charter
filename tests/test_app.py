@@ -1018,6 +1018,20 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("text/plain", txt.content_type)
         self.assertIn("GROUND TRUTH", txt.get_data(as_text=True))
 
+    def test_evolution_reports_compounding_footprint(self):
+        app_module.attestation_engine.attest("evolution-doc", "body", ["plan"], 0.9)
+        data = self.client.get("/evolution").get_json()
+        self.assertTrue(data["append_only"])
+        self.assertEqual(data["invariant"], "Continuous Becoming")
+        # per-ledger counts present, attestations reflect the record
+        self.assertIn("attestations", data["ledgers"])
+        self.assertGreaterEqual(data["ledgers"]["attestations"]["count"], 1)
+        self.assertGreaterEqual(data["ledgers"]["decisions"]["count"], 1)
+        # the running total sums the ledgers
+        self.assertEqual(
+            data["records_total"], sum(l["count"] for l in data["ledgers"].values())
+        )
+
     def test_status_digest_is_signed_and_verifiable(self):
         import status_digest
         app_module.attestation_engine.attest("digest-doc", "body", ["plan"], 0.9)
