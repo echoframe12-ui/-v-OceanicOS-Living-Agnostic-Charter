@@ -1390,6 +1390,13 @@ class OceanicOSAppTests(unittest.TestCase):
         # per-entry integrity (round 50) in the Receipt panel
         self.assertIn("this entry", body)
 
+    def test_console_has_attention_worklist(self):
+        body = self.client.get("/").get_data(as_text=True)
+        # the round-63 attention queue drives a steward worklist in the console
+        self.assertIn('id="attention-list"', body)
+        self.assertIn("/attestations/attention", body)
+        self.assertIn("work these first", body)
+
     def test_node_mounts(self):
         mounted = self.client.post(
             "/nodes",
