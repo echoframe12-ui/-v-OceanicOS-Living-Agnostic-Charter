@@ -166,6 +166,39 @@ class SubcommandTests(unittest.TestCase):
         code_ok, _ = self._run(["gate", "--min-sourced", "0.5"])
         self.assertEqual(code_ok, 0)
 
+    def test_gate_max_held_pending(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "1", [], 0.4)  # held
+        engine.attest("b", "2", [], 0.3)  # held -> 2 pending
+        code, out = self._run(["gate", "--max-held-pending", "1"])
+        self.assertEqual(code, 1)
+        self.assertIn("held_pending 2 over limit 1", out)
+        code_ok, _ = self._run(["gate", "--max-held-pending", "2"])
+        self.assertEqual(code_ok, 0)
+
+    def test_gate_no_sla_breach(self):
+        from unittest.mock import patch
+        from datetime import datetime, timezone
+        engine = AttestationEngine(self.db_path)
+        old = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        # attest a held item timestamped in the distant past — the hash is
+        # computed over that old created_at, so the chain stays intact
+        with patch("attestation.datetime") as m:
+            m.now.return_value = old
+            engine.attest("a", "1", [], 0.4)  # held
+        self.assertTrue(engine.verify_chain()["intact"])  # not a chain break
+        prev = os.environ.get("OCEANICOS_HELD_SLA_SECONDS")
+        os.environ["OCEANICOS_HELD_SLA_SECONDS"] = "3600"
+        try:
+            code, out = self._run(["gate", "--no-sla-breach"])
+        finally:
+            if prev is None:
+                os.environ.pop("OCEANICOS_HELD_SLA_SECONDS", None)
+            else:
+                os.environ["OCEANICOS_HELD_SLA_SECONDS"] = prev
+        self.assertEqual(code, 1)
+        self.assertIn("past the review SLA", out)
+
 
 if __name__ == "__main__":
     unittest.main()
