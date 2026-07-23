@@ -176,6 +176,59 @@ class SubcommandTests(unittest.TestCase):
         code_ok, _ = self._run(["gate", "--max-held-pending", "2"])
         self.assertEqual(code_ok, 0)
 
+    def test_digest_emits_signed_and_verifies_roundtrip(self):
+        import status_digest
+        AttestationEngine(self.db_path).attest("a", "c", ["plan"], 0.9)
+        prev = os.environ.get("OCEANICOS_SIGNING_KEY")
+        os.environ["OCEANICOS_SIGNING_KEY"] = "cli-key"
+        try:
+            code, out = self._run(["digest"])
+            self.assertEqual(code, 0)
+            digest = json.loads(out)
+            self.assertTrue(digest["signed"])
+            self.assertIn(digest["posture"], ("TRUSTWORTHY", "INTACT", "BROKEN"))
+            # the emitted signature verifies with the module
+            self.assertTrue(status_digest.verify(digest, digest["signature"], "cli-key"))
+            # write it out and verify via the CLI
+            path = os.path.join(self.workspace, "d.json")
+            with open(path, "w") as fh:
+                fh.write(out)
+            vcode, vout = self._run(["digest", "--verify", path])
+            self.assertEqual(vcode, 0)
+            self.assertIn("VALID", vout)
+        finally:
+            if prev is None:
+                os.environ.pop("OCEANICOS_SIGNING_KEY", None)
+            else:
+                os.environ["OCEANICOS_SIGNING_KEY"] = prev
+
+    def test_digest_verify_rejects_wrong_key_and_tamper(self):
+        AttestationEngine(self.db_path).attest("a", "c", ["plan"], 0.9)
+        prev = os.environ.get("OCEANICOS_SIGNING_KEY")
+        os.environ["OCEANICOS_SIGNING_KEY"] = "cli-key"
+        try:
+            _, out = self._run(["digest"])
+            path = os.path.join(self.workspace, "d.json")
+            with open(path, "w") as fh:
+                fh.write(out)
+            # wrong key -> INVALID, exit 1
+            code, vout = self._run(["digest", "--verify", path, "--key", "wrong"])
+            self.assertEqual(code, 1)
+            self.assertIn("INVALID", vout)
+            # tamper the posture -> INVALID
+            digest = json.loads(out)
+            digest["posture"] = "BROKEN" if digest["posture"] != "BROKEN" else "INTACT"
+            with open(path, "w") as fh:
+                fh.write(json.dumps(digest))
+            code2, vout2 = self._run(["digest", "--verify", path])
+            self.assertEqual(code2, 1)
+            self.assertIn("INVALID", vout2)
+        finally:
+            if prev is None:
+                os.environ.pop("OCEANICOS_SIGNING_KEY", None)
+            else:
+                os.environ["OCEANICOS_SIGNING_KEY"] = prev
+
     def test_gate_no_sla_breach(self):
         from unittest.mock import patch
         from datetime import datetime, timezone

@@ -33,6 +33,49 @@ SIGNABLE_FIELDS = (
 )
 
 
+def posture_of(verify: dict[str, Any]) -> str:
+    """The single trust verdict from a `verify()` report — the one source of it.
+
+    `BROKEN` when the chain is not intact, `TRUSTWORTHY` when a valid signed
+    checkpoint seals the intact head, else `INTACT`. Shared by the status board,
+    the JSON twin, and the signed digest so all three name the posture the same.
+    """
+    if not verify["intact"]:
+        return "BROKEN"
+    if verify.get("trustworthy"):
+        return "TRUSTWORTHY"
+    return "INTACT"
+
+
+def build_payload(
+    verify: dict[str, Any],
+    cvi_value: float,
+    sourced_ratio: float,
+    held_pending: int,
+    held_breached: int,
+    checkpoint_head: str | None,
+    generated_at: str,
+) -> dict[str, Any]:
+    """Assemble the canonical, signable posture payload — one source, no drift.
+
+    Used by both the `/status/digest` endpoint and the `digest` CLI so a digest
+    produced by the running service and one produced offline from the same ledger
+    are byte-identical. The keys are exactly `SIGNABLE_FIELDS`.
+    """
+    return {
+        "posture": posture_of(verify),
+        "cvi": cvi_value,
+        "sourced_ratio": sourced_ratio,
+        "chain_intact": verify["intact"],
+        "trustworthy": bool(verify.get("trustworthy")),
+        "chain_length": verify["length"],
+        "held_pending": held_pending,
+        "held_breached": held_breached,
+        "checkpoint_head": checkpoint_head,
+        "generated_at": generated_at,
+    }
+
+
 def canonical(payload: dict[str, Any]) -> str:
     """The canonical, signature-covered form: the signable fields, sorted, compact.
 

@@ -25,6 +25,8 @@ import anchor
 import identity
 import models
 import readiness
+import status_digest
+from datetime import datetime, timezone
 from attestation import CONFIDENCE_THRESHOLD, AttestationEngine
 from held_reviews import HeldReviewLog, sla_status
 from models import ModelAdapter, ModelRouter
@@ -196,6 +198,73 @@ def _cmd_ready(argv: list[str]) -> int:
     return 0 if report["ready"] else 1
 
 
+def _held_health(engine: AttestationEngine, review_log: HeldReviewLog, released) -> tuple[int, int]:
+    """Held-queue health from the local ledger — pending count and SLA breaches.
+
+    Computed exactly as the service does (released items credited, the same
+    `sla_status` and `OCEANICOS_HELD_SLA_SECONDS`), shared by `gate` and `digest`
+    so neither drifts from `/metrics` or `/status.json`.
+    """
+    sla_seconds = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
+    held = engine.held()
+    pending = [att for att in held if att["id"] not in released]
+    breached = sum(
+        1
+        for att in held
+        if sla_status(
+            att["created_at"], review_log.latest_for(att["id"]), sla_seconds
+        ).get("sla_breached")
+    )
+    return len(pending), breached
+
+
+def _cmd_digest(argv: list[str]) -> int:
+    """Emit or verify a signed status digest — the portable posture, offline.
+
+    With no arguments, builds a signed digest from the configured ledger (the
+    same canonical payload the `/status/digest` endpoint signs) and prints it.
+    With `--verify FILE` (or `-` for stdin), checks a digest's operator-key
+    signature and exits non-zero if it does not verify. The offline half of the
+    self-report loop: produce here, hand it to an auditor, verify anywhere.
+    """
+    parser = argparse.ArgumentParser(prog="oceanic-os digest")
+    parser.add_argument(
+        "--verify", metavar="FILE", default=None,
+        help="verify a digest file (or '-' for stdin) instead of emitting one",
+    )
+    parser.add_argument("--key", default=None, help="signing key (default OCEANICOS_SIGNING_KEY)")
+    args = parser.parse_args(argv)
+    key = args.key or os.getenv("OCEANICOS_SIGNING_KEY") or None
+
+    if args.verify is not None:
+        raw = sys.stdin.read() if args.verify == "-" else open(args.verify).read()
+        digest = json.loads(raw)
+        valid = status_digest.verify(digest, digest.get("signature"), key)
+        print(
+            f"digest: {'VALID' if valid else 'INVALID'}"
+            f" · posture {digest.get('posture')} · {digest.get('generated_at')}"
+        )
+        return 0 if valid else 1
+
+    engine = AttestationEngine(_db_path())
+    review_log = HeldReviewLog(_db_path())
+    released = review_log.released_ids()
+    held_pending, held_breached = _held_health(engine, review_log, released)
+    cp = engine.latest_checkpoint()
+    payload = status_digest.build_payload(
+        verify=engine.verify(),
+        cvi_value=engine.cvi(released_ids=released)["cvi"],
+        sourced_ratio=engine.stats()["sourced_ratio"],
+        held_pending=held_pending,
+        held_breached=held_breached,
+        checkpoint_head=cp["head_hash"] if cp else None,
+        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    signature = status_digest.sign(key, payload) if key else None
+    print(json.dumps({**payload, "signed": signature is not None, "signature": signature}, indent=2))
+    return 0
+
+
 def _cmd_gate(argv: list[str]) -> int:
     """A CI trust gate: pass only if the ledger meets the required posture.
 
@@ -235,18 +304,7 @@ def _cmd_gate(argv: list[str]) -> int:
     released = review_log.released_ids()
     cvi = engine.cvi(released_ids=released)
     stats = engine.stats()
-
-    # held-queue health — the operational dimension, computed as the service does
-    sla_seconds = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
-    held = engine.held()
-    held_pending = [att for att in held if att["id"] not in released]
-    held_breached = sum(
-        1
-        for att in held
-        if sla_status(
-            att["created_at"], review_log.latest_for(att["id"]), sla_seconds
-        ).get("sla_breached")
-    )
+    held_pending, held_breached = _held_health(engine, review_log, released)
 
     reasons: list[str] = []
     if not verify["intact"]:
@@ -257,8 +315,8 @@ def _cmd_gate(argv: list[str]) -> int:
         reasons.append(f"cvi {cvi['cvi']} below floor {args.min_cvi}")
     if args.min_sourced is not None and stats["sourced_ratio"] < args.min_sourced:
         reasons.append(f"sourced_ratio {stats['sourced_ratio']} below floor {args.min_sourced}")
-    if args.max_held_pending is not None and len(held_pending) > args.max_held_pending:
-        reasons.append(f"held_pending {len(held_pending)} over limit {args.max_held_pending}")
+    if args.max_held_pending is not None and held_pending > args.max_held_pending:
+        reasons.append(f"held_pending {held_pending} over limit {args.max_held_pending}")
     if args.no_sla_breach and held_breached:
         reasons.append(f"{held_breached} held attestation(s) past the review SLA")
     passed = not reasons
@@ -269,7 +327,7 @@ def _cmd_gate(argv: list[str]) -> int:
         "trustworthy": bool(verify.get("trustworthy")),
         "cvi": cvi["cvi"],
         "sourced_ratio": stats["sourced_ratio"],
-        "held_pending": len(held_pending),
+        "held_pending": held_pending,
         "held_breached": held_breached,
         "length": verify["length"],
         "policy": {
@@ -299,6 +357,7 @@ _COMMANDS = {
     "stats": _cmd_stats,
     "ready": _cmd_ready,
     "gate": _cmd_gate,
+    "digest": _cmd_digest,
 }
 
 

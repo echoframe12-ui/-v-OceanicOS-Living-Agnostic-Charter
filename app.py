@@ -795,12 +795,8 @@ def _status_snapshot() -> dict[str, Any]:
             att["created_at"], held_review_log.latest_for(att["id"]), HELD_SLA_SECONDS
         ).get("sla_breached")
     )
-    if not verify["intact"]:
-        posture, posture_class = "BROKEN", "bad"
-    elif verify.get("trustworthy"):
-        posture, posture_class = "TRUSTWORTHY", "ok"
-    else:
-        posture, posture_class = "INTACT", "warn"
+    posture = status_digest.posture_of(verify)
+    posture_class = {"BROKEN": "bad", "TRUSTWORTHY": "ok", "INTACT": "warn"}[posture]
     return {
         "posture": posture,
         "posture_class": posture_class,
@@ -860,18 +856,15 @@ def status_digest_endpoint():
     """
     snap = _status_snapshot()
     cp = snap["checkpoint"]
-    payload = {
-        "posture": snap["posture"],
-        "cvi": snap["cvi"]["cvi"],
-        "sourced_ratio": snap["sourced_ratio"],
-        "chain_intact": snap["verify"]["intact"],
-        "trustworthy": bool(snap["verify"].get("trustworthy")),
-        "chain_length": snap["verify"]["length"],
-        "held_pending": snap["held_pending"],
-        "held_breached": snap["held_breached"],
-        "checkpoint_head": cp["head_hash"] if cp else None,
-        "generated_at": snap["generated_at"],
-    }
+    payload = status_digest.build_payload(
+        verify=snap["verify"],
+        cvi_value=snap["cvi"]["cvi"],
+        sourced_ratio=snap["sourced_ratio"],
+        held_pending=snap["held_pending"],
+        held_breached=snap["held_breached"],
+        checkpoint_head=cp["head_hash"] if cp else None,
+        generated_at=snap["generated_at"],
+    )
     key = os.getenv("OCEANICOS_SIGNING_KEY") or None
     signature = status_digest.sign(key, payload) if key else None
     return jsonify({**payload, "signed": signature is not None, "signature": signature})
