@@ -573,6 +573,8 @@ class OceanicOSAppTests(unittest.TestCase):
         # the evidence axis is scrapeable alongside the confidence axis
         self.assertIn("# HELP oceanicos_sourced_ratio", body)
         self.assertIn("oceanicos_sourced_ratio", body)
+        # the CVI peak (regression baseline) is scrapeable
+        self.assertIn("oceanicos_cvi_peak", body)
 
     def test_rules_evaluate_endpoint_explains_itself(self):
         response = self.client.post(
@@ -996,6 +998,16 @@ class OceanicOSAppTests(unittest.TestCase):
         # the evidence axis has its own tile
         self.assertIn("Sourced", body)
 
+    def test_status_board_shows_cvi_regression_from_peak(self):
+        # record a peak well above whatever the current CVI is
+        app_module.cvi_history.record(
+            {"cvi": 0.99, "mean_confidence": 0.99, "held_ratio": 0.0, "samples": 1}
+        )
+        body = self.client.get("/status").get_data(as_text=True)
+        self.assertIn("from peak", body)
+        # and the machine twin carries the peak
+        self.assertEqual(self.client.get("/status.json").get_json()["cvi_peak"], 0.99)
+
     def test_status_json_twin_matches_the_page(self):
         app_module.attestation_engine.attest("status-json-doc", "body", ["plan"], 0.9)
         resp = self.client.get("/status.json")
@@ -1010,8 +1022,10 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertEqual(data["cvi"]["cvi"], self.client.get("/cvi").get_json()["cvi"])
         for key in ("verify", "held_pending", "held_breached", "checkpoint",
                     "audit", "attestations_total", "threshold", "generated_at",
-                    "sourced_ratio"):
+                    "sourced_ratio", "cvi_peak"):
             self.assertIn(key, data)
+        # the peak is at least the current CVI (the baseline never trails it)
+        self.assertGreaterEqual(data["cvi_peak"], data["cvi"]["cvi"])
 
         txt = self.client.get("/builds/export.txt")
         self.assertEqual(txt.status_code, 200)

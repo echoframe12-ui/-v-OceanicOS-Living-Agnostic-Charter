@@ -865,11 +865,14 @@ def _status_snapshot() -> dict[str, Any]:
     )
     posture = status_digest.posture_of(verify)
     posture_class = {"BROKEN": "bad", "TRUSTWORTHY": "ok", "INTACT": "warn"}[posture]
+    # the CVI's recorded peak — the regression baseline (round 63), made visible
+    cvi_peak = max((point["cvi"] for point in cvi_history.list()), default=cvi["cvi"])
     return {
         "posture": posture,
         "posture_class": posture_class,
         "verify": verify,
         "cvi": cvi,
+        "cvi_peak": round(cvi_peak, 3),
         "sourced_ratio": stats["sourced_ratio"],
         "attestations_total": len(attestation_engine.list()),
         "held_pending": len(held_pending),
@@ -964,6 +967,7 @@ def prometheus_metrics():
         {"name": "oceanicos_held_pending", "help": "Held attestations awaiting a steward decision", "value": len(held_pending)},
         {"name": "oceanicos_held_sla_breached", "help": "Pending held attestations past the review SLA", "value": held_breached},
         {"name": "oceanicos_cvi", "help": "Composite Verification Index (0-1), released items credited", "value": attestation_engine.cvi(released_ids=released)["cvi"]},
+        {"name": "oceanicos_cvi_peak", "help": "Highest recorded CVI — the regression baseline (0-1)", "value": max((p["cvi"] for p in cvi_history.list()), default=attestation_engine.cvi(released_ids=released)["cvi"])},
         {"name": "oceanicos_sourced_ratio", "help": "Fraction of attestations that cite at least one source (0-1)", "value": attestation_engine.stats()["sourced_ratio"]},
         {"name": "oceanicos_builds_total", "help": "Total builds in the ledger", "value": len(service.list_builds())},
         {"name": "oceanicos_users_total", "help": "Registered accounts", "value": len(auth_registry.list_users())},
