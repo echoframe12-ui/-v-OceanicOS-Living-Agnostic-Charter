@@ -1478,43 +1478,54 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertTrue(response.content_type.startswith("image/"))
         self.assertGreater(len(response.get_data()), 0)
 
-    def test_index_renders_boot_splash(self):
+    def test_root_serves_the_chat_terminal(self):
         response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        # the OS face is now a conversational verification terminal
+        self.assertIn("I don't generate; I attest.", body)
+        self.assertIn('id="thread"', body)
+        self.assertIn("/builder/run", body)
+        # it links to the full operator console
+        self.assertIn('href="/console"', body)
+
+    def test_console_renders_boot_splash(self):
+        response = self.client.get("/console")
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
         self.assertIn("boot-splash", body)
         self.assertIn("/static/brand/oceanicos-badge.png", body)
 
     def test_console_has_subject_timeline_panel(self):
-        body = self.client.get("/").get_data(as_text=True)
+        body = self.client.get("/console").get_data(as_text=True)
         # the round-53 subject history is surfaced as an interactive console panel
         self.assertIn("Subject // Timeline", body)
         self.assertIn('id="history-form"', body)
         self.assertIn("/attestations/history?subject=", body)
 
     def test_console_surfaces_source_coverage_and_entry_integrity(self):
-        body = self.client.get("/").get_data(as_text=True)
+        body = self.client.get("/console").get_data(as_text=True)
         # source coverage (round 55) in the Stats panel
         self.assertIn("cite evidence", body)
         # per-entry integrity (round 50) in the Receipt panel
         self.assertIn("this entry", body)
 
     def test_console_has_attention_worklist(self):
-        body = self.client.get("/").get_data(as_text=True)
+        body = self.client.get("/console").get_data(as_text=True)
         # the round-63 attention queue drives a steward worklist in the console
         self.assertIn('id="attention-list"', body)
         self.assertIn("/attestations/attention", body)
         self.assertIn("work these first", body)
 
     def test_console_surfaces_dissent_trend(self):
-        body = self.client.get("/").get_data(as_text=True)
+        body = self.client.get("/console").get_data(as_text=True)
         # the round-65 dissent ledger drives a trend readout in the Consensus panel
         self.assertIn('id="dissent-trend"', body)
         self.assertIn("/consensus/stats", body)
         self.assertIn("dissent ledger", body)
 
     def test_console_has_evolution_panel(self):
-        body = self.client.get("/").get_data(as_text=True)
+        body = self.client.get("/console").get_data(as_text=True)
         # the round-67 compounding footprint has a console panel
         self.assertIn("Evolution // Compounding", body)
         self.assertIn('id="evolution"', body)
