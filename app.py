@@ -20,6 +20,7 @@ import badge
 import doctrine
 import evolution
 import identity
+import report
 import status_digest
 import metrics
 import openapi
@@ -1135,6 +1136,20 @@ def list_decisions():
     return jsonify(decision_registry.list())
 
 
+def _ledger_counts() -> dict[str, int]:
+    """The per-ledger record counts — the compounding footprint's raw numbers."""
+    return {
+        "attestations": len(attestation_engine.list()),
+        "checkpoints": len(attestation_engine.list_checkpoints()),
+        "builds": len(service.list_builds()),
+        "drift_audits": len(drift_audit_log.list()),
+        "cvi_history": len(cvi_history.list()),
+        "held_reviews": len(held_review_log.list()),
+        "consensus_evaluations": consensus_log.stats()["evaluations"],
+        "decisions": len(adr.list_adr()),
+    }
+
+
 @app.route("/evolution", methods=["GET"])
 def serve_evolution():
     """The platform's compounding footprint — what its append-only ledgers accrued.
@@ -1145,17 +1160,25 @@ def serve_evolution():
     the platform's own evolution — plus the running total. Public and aggregate,
     like `/metrics`: counts only, no per-record content.
     """
-    ledgers = {
-        "attestations": len(attestation_engine.list()),
-        "checkpoints": len(attestation_engine.list_checkpoints()),
-        "builds": len(service.list_builds()),
-        "drift_audits": len(drift_audit_log.list()),
-        "cvi_history": len(cvi_history.list()),
-        "held_reviews": len(held_review_log.list()),
-        "consensus_evaluations": consensus_log.stats()["evaluations"],
-        "decisions": len(adr.list_adr()),
-    }
-    return jsonify(evolution.compounding(ledgers))
+    return jsonify(evolution.compounding(_ledger_counts()))
+
+
+@app.route("/report", methods=["GET"])
+def serve_report():
+    """A composed, human-readable trust report — the platform's state as one page.
+
+    The Markdown counterpart to `/status.json`: the same posture, the trust
+    dimensions (confidence and its peak, evidence, dissent, integrity), the held
+    queue, the seal and the last audit, and the compounding footprint, synthesized
+    into a document a stakeholder can read or attach to a release. Public and
+    aggregate; composes existing reads and states no new fact.
+    """
+    text = report.render(
+        _status_snapshot(),
+        evolution.compounding(_ledger_counts()),
+        consensus_log.stats(),
+    )
+    return Response(text, mimetype="text/markdown")
 
 
 @app.route("/doctrine", methods=["GET"])

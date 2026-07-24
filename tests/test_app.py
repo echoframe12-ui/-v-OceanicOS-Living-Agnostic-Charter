@@ -1032,6 +1032,18 @@ class OceanicOSAppTests(unittest.TestCase):
         self.assertIn("text/plain", txt.content_type)
         self.assertIn("GROUND TRUTH", txt.get_data(as_text=True))
 
+    def test_report_renders_human_trust_report(self):
+        app_module.attestation_engine.attest("report-doc", "body", ["plan"], 0.9)
+        resp = self.client.get("/report")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/markdown", resp.content_type)
+        text = resp.get_data(as_text=True)
+        self.assertIn("# OceanicOS Trust Report", text)
+        self.assertIn("## Posture:", text)
+        self.assertIn("Source coverage", text)
+        self.assertIn("Compounding footprint", text)
+        self.assertIn("Exit 0. Continues", text)
+
     def test_evolution_reports_compounding_footprint(self):
         app_module.attestation_engine.attest("evolution-doc", "body", ["plan"], 0.9)
         data = self.client.get("/evolution").get_json()
