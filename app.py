@@ -29,6 +29,7 @@ from agent import AgentLoop
 from consensus_log import ConsensusLog
 from cvi_history import CviHistory
 from drift_audit import DriftAuditLog
+from supersession import SupersessionLog
 from verify_ledger import verify_bundle
 from artifacts import ArtifactRegistry
 from attestation import AttestationEngine, CONFIDENCE_THRESHOLD
@@ -141,6 +142,7 @@ held_review_log = HeldReviewLog(str(service.db_path))
 cvi_history = CviHistory(str(service.db_path))
 drift_audit_log = DriftAuditLog(str(service.db_path))
 consensus_log = ConsensusLog(str(service.db_path))
+supersession_log = SupersessionLog(str(service.db_path))
 # Time-to-decision SLA for held attestations (seconds). 0 disables breach flags.
 HELD_SLA_SECONDS = int(os.getenv("OCEANICOS_HELD_SLA_SECONDS", "86400"))
 
@@ -577,6 +579,50 @@ def review_held_attestation(att_id: int):
 @app.route("/attestations/<int:att_id>/reviews", methods=["GET"])
 def list_held_reviews(att_id: int):
     return jsonify(held_review_log.list(att_id))
+
+
+def _attestation_exists(att_id: int) -> bool:
+    return any(a["id"] == att_id for a in attestation_engine.list())
+
+
+@app.route("/attestations/<int:new_id>/supersedes", methods=["POST"])
+@require_auth
+def supersede_attestation(new_id: int):
+    """Record that this attestation supersedes an earlier one — re-verification lineage.
+
+    Body `{ "old_id": N, "reason": "..." }`. Both attestations must exist and
+    differ; a reason is required. Append-only in its own table — the superseded
+    attestation is never edited, so the chain stays intact. Returns the new
+    attestation's lineage.
+    """
+    payload = request.get_json(silent=True) or {}
+    old_id = payload.get("old_id")
+    reason = (payload.get("reason") or "").strip()
+    if not isinstance(old_id, int):
+        return jsonify({"error": "old_id (integer) is required"}), 400
+    if old_id == new_id:
+        return jsonify({"error": "an attestation cannot supersede itself"}), 400
+    if not reason:
+        return jsonify({"error": "a reason is required"}), 400
+    if not _attestation_exists(new_id) or not _attestation_exists(old_id):
+        return jsonify({"error": "both attestations must exist"}), 404
+    if supersession_log.exists(old_id, new_id):
+        return jsonify({"error": f"#{new_id} already supersedes #{old_id}"}), 409
+    supersession_log.record(old_id, new_id, g.actor, reason)
+    usage_log.record(g.actor, "supersede", g.tier, f"#{new_id} supersedes #{old_id}")
+    return jsonify(supersession_log.lineage(new_id))
+
+
+@app.route("/attestations/<int:att_id>/lineage", methods=["GET"])
+def attestation_lineage(att_id: int):
+    """The supersession lineage of one attestation — what it supersedes / supersedes it.
+
+    `is_current` is true when nothing supersedes it: the answer to "is this the
+    current verified version?". Public; 404 for a missing id.
+    """
+    if not _attestation_exists(att_id):
+        return jsonify({"error": f"no attestation #{att_id}"}), 404
+    return jsonify(supersession_log.lineage(att_id))
 
 
 @app.route("/attestations/<int:att_id>/receipt", methods=["GET"])

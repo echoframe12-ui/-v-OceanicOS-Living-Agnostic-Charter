@@ -275,6 +275,51 @@ class OceanicOSAppTests(unittest.TestCase):
             400,
         )
 
+    def test_attestation_supersession_lineage(self):
+        engine = app_module.attestation_engine
+        app_module.auth_registry.admin_users.discard("nobody")  # noop, keep style
+        v1 = engine.attest("charter", "draft one", ["plan"], 0.9)
+        v2 = engine.attest("charter", "draft two", ["plan"], 0.95)
+        token = self.client.post(
+            "/auth/register", data=json.dumps({"username": "supersede-user"}),
+            content_type="application/json",
+        ).get_json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+
+        # v2 supersedes v1
+        resp = self.client.post(
+            f"/attestations/{v2['id']}/supersedes",
+            data=json.dumps({"old_id": v1["id"], "reason": "re-verified revision"}),
+            content_type="application/json", headers=auth,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["supersedes"], [v1["id"]])
+
+        # lineage: v1 no longer current, v2 is
+        self.assertFalse(self.client.get(f"/attestations/{v1['id']}/lineage").get_json()["is_current"])
+        self.assertTrue(self.client.get(f"/attestations/{v2['id']}/lineage").get_json()["is_current"])
+
+        # validation: self-supersede, missing reason, missing id, duplicate
+        self.assertEqual(self.client.post(
+            f"/attestations/{v2['id']}/supersedes",
+            data=json.dumps({"old_id": v2["id"], "reason": "x"}),
+            content_type="application/json", headers=auth).status_code, 400)
+        self.assertEqual(self.client.post(
+            f"/attestations/{v2['id']}/supersedes",
+            data=json.dumps({"old_id": v1["id"]}),
+            content_type="application/json", headers=auth).status_code, 400)
+        self.assertEqual(self.client.post(
+            f"/attestations/{v2['id']}/supersedes",
+            data=json.dumps({"old_id": 999999, "reason": "x"}),
+            content_type="application/json", headers=auth).status_code, 404)
+        # duplicate link -> 409
+        self.assertEqual(self.client.post(
+            f"/attestations/{v2['id']}/supersedes",
+            data=json.dumps({"old_id": v1["id"], "reason": "again"}),
+            content_type="application/json", headers=auth).status_code, 409)
+        # lineage of a missing attestation -> 404
+        self.assertEqual(self.client.get("/attestations/999999/lineage").status_code, 404)
+
     def test_attestation_subject_history_endpoint(self):
         engine = app_module.attestation_engine
         engine.attest("history-doc", "v1", [], 0.5)  # held
