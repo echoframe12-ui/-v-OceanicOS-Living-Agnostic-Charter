@@ -229,6 +229,31 @@ class SubcommandTests(unittest.TestCase):
             else:
                 os.environ["OCEANICOS_SIGNING_KEY"] = prev
 
+    def test_gate_max_cvi_drop_catches_regression(self):
+        from cvi_history import CviHistory
+        engine = AttestationEngine(self.db_path)
+        # current CVI ~0.8 (three attested items above threshold)
+        for i in range(3):
+            engine.attest(f"s{i}", str(i), ["plan"], 0.8)
+        # a recorded peak of 0.95 in the CVI history
+        CviHistory(self.db_path).record(
+            {"cvi": 0.95, "mean_confidence": 0.95, "held_ratio": 0.0, "samples": 3}
+        )
+        # dropped 0.15 below peak: fails a 0.1 limit, passes a 0.2 limit
+        code, out = self._run(["gate", "--max-cvi-drop", "0.1"])
+        self.assertEqual(code, 1)
+        self.assertIn("below peak", out)
+        code_ok, _ = self._run(["gate", "--max-cvi-drop", "0.2"])
+        self.assertEqual(code_ok, 0)
+
+    def test_gate_max_cvi_drop_noop_without_history(self):
+        engine = AttestationEngine(self.db_path)
+        engine.attest("a", "1", ["plan"], 0.8)
+        # no CVI history recorded -> no baseline -> the check passes
+        code, out = self._run(["gate", "--max-cvi-drop", "0.01"])
+        self.assertEqual(code, 0)
+        self.assertIn("PASS", out)
+
     def test_gate_no_sla_breach(self):
         from unittest.mock import patch
         from datetime import datetime, timezone

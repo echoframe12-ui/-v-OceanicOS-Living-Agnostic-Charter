@@ -28,6 +28,7 @@ import readiness
 import status_digest
 from datetime import datetime, timezone
 from attestation import CONFIDENCE_THRESHOLD, AttestationEngine
+from cvi_history import CviHistory
 from held_reviews import HeldReviewLog, sla_status
 from models import ModelAdapter, ModelRouter
 
@@ -295,6 +296,10 @@ def _cmd_gate(argv: list[str]) -> int:
         "--no-sla-breach", action="store_true",
         help="fail if any pending held attestation is past the review SLA",
     )
+    parser.add_argument(
+        "--max-cvi-drop", type=float, default=None,
+        help="fail if the CVI has fallen more than this far below its recorded peak",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -306,6 +311,10 @@ def _cmd_gate(argv: list[str]) -> int:
     stats = engine.stats()
     held_pending, held_breached = _held_health(engine, review_log, released)
 
+    # CVI peak from the recorded trend — the baseline a regression is measured against
+    history = CviHistory(_db_path()).list()
+    cvi_peak = max((point["cvi"] for point in history), default=None)
+
     reasons: list[str] = []
     if not verify["intact"]:
         reasons.append(f"chain broken @ {verify.get('broken_at')}")
@@ -313,6 +322,15 @@ def _cmd_gate(argv: list[str]) -> int:
         reasons.append("not trustworthy (no valid signed checkpoint)")
     if args.min_cvi is not None and cvi["cvi"] < args.min_cvi:
         reasons.append(f"cvi {cvi['cvi']} below floor {args.min_cvi}")
+    if (
+        args.max_cvi_drop is not None
+        and cvi_peak is not None
+        and cvi["cvi"] < round(cvi_peak - args.max_cvi_drop, 6)
+    ):
+        reasons.append(
+            f"cvi {cvi['cvi']} dropped {round(cvi_peak - cvi['cvi'], 3)} "
+            f"below peak {cvi_peak} (limit {args.max_cvi_drop})"
+        )
     if args.min_sourced is not None and stats["sourced_ratio"] < args.min_sourced:
         reasons.append(f"sourced_ratio {stats['sourced_ratio']} below floor {args.min_sourced}")
     if args.max_held_pending is not None and held_pending > args.max_held_pending:
@@ -326,6 +344,7 @@ def _cmd_gate(argv: list[str]) -> int:
         "intact": verify["intact"],
         "trustworthy": bool(verify.get("trustworthy")),
         "cvi": cvi["cvi"],
+        "cvi_peak": cvi_peak,
         "sourced_ratio": stats["sourced_ratio"],
         "held_pending": held_pending,
         "held_breached": held_breached,
@@ -336,6 +355,7 @@ def _cmd_gate(argv: list[str]) -> int:
             "min_sourced": args.min_sourced,
             "max_held_pending": args.max_held_pending,
             "no_sla_breach": args.no_sla_breach,
+            "max_cvi_drop": args.max_cvi_drop,
         },
         "reasons": reasons,
     }
