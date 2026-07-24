@@ -279,6 +279,13 @@ def require_admin(view):
 
 @app.route("/", methods=["GET"])
 def index():
+    """The OS face — a conversational verification terminal: ask, and it attests."""
+    return render_template("chat.html")
+
+
+@app.route("/console", methods=["GET"])
+def console():
+    """The full operator console — every panel, for driving the platform directly."""
     return render_template("index.html")
 
 
