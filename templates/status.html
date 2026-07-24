@@ -49,7 +49,7 @@
       <div class="tile">
         <div class="k">CVI</div>
         <div class="v {{ 'ok' if cvi.cvi >= threshold else ('warn' if cvi.cvi >= 0.4 else 'bad') }}">{{ '%.2f'|format(cvi.cvi) }}</div>
-        <div class="u">[{{ '%.2f'|format(cvi.confidence_interval[0]) }}–{{ '%.2f'|format(cvi.confidence_interval[1]) }}]</div>
+        <div class="u">[{{ '%.2f'|format(cvi.confidence_interval[0]) }}–{{ '%.2f'|format(cvi.confidence_interval[1]) }}]{% if cvi_peak > cvi.cvi %} · <span class="warn">▼{{ '%.2f'|format(cvi_peak - cvi.cvi) }} from peak {{ '%.2f'|format(cvi_peak) }}</span>{% else %} · at peak{% endif %}</div>
       </div>
       <div class="tile">
         <div class="k">Attestations</div>
